@@ -12,3 +12,5 @@ gym_mupen64plus/ROMs/*
 #   these to exist inside the image anyway
 README.md
 docs/
+DRL_final/
+RL_env/

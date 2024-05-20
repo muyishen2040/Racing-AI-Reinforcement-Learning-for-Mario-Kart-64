@@ -58,6 +58,6 @@ services:
     environment:
       - DISPLAY=xvfbsrv:0
       - EXTERNAL_EMULATOR=True
-    command: [ 'python', '-u', 'gym-mupen64plus/example.py' ] # -u for unbuffered output so logs show immediately (in theory)
+    command: [ 'python', '-u', 'gym-mupen64plus/EnvSender.py' ] # -u for unbuffered output so logs show immediately (in theory)
     depends_on: [ xvfbsrv ]
 
