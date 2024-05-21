@@ -3,7 +3,7 @@ import pickle
 
 class EnvReceiver:
     def __init__(self):
-        host = '0.0.0.0'  # Listen on all network interfaces
+        host = '0.0.0.0'
         port = 12345
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -35,3 +35,4 @@ class EnvReceiver:
         self._send_data(action)
         data = self._recv_data()
         return pickle.loads(data, encoding='bytes')
+
