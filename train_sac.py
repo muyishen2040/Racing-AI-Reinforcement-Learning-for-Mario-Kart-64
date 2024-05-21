@@ -74,7 +74,7 @@ class SAC:
 
 def main():
 
-    # writer = SummaryWriter()
+    writer = SummaryWriter()
     env = EnvReceiver()
     
     config = {
@@ -89,7 +89,7 @@ def main():
         'actor_lr': 5e-4,
         'critic_lr': 5e-4,
         'batch_size': 256,
-        'episodes': 40000
+        'episodes': 10000
     }
     
     preprocess = transforms.Compose([
@@ -112,6 +112,7 @@ def main():
         while not done:
             # action = [np.random.uniform(-80, 80), np.random.uniform(-80, 80), np.random.choice([0, 1]), np.random.choice([0, 1]), np.random.choice([0, 1])]
             action = agent.actor.choose_action(obs.unsqueeze(0).to(device))
+            print(action)
             # pdb.set_trace()
             
             next_obs, reward, done, info = env.step(action.flatten().tolist())
@@ -127,20 +128,20 @@ def main():
                 agent.update()
             
         
-        # writer.add_scalar("Reward/episode", episode_reward, episode)
-        print(f"Episode {episode + 1}: Total Reward: {episode_reward}")
+        writer.add_scalar("Reward/episode", total_reward, episode)
+        print(f"Episode {episode + 1}: Total Reward: {total_reward}")
         
-        if episode_reward > best_reward:
+        if total_reward > best_reward:
             print('\n----------------------')
-            print('New best episode: {}'.format(episode_reward))
-            # torch.save(agent.actor.actor_net, 'agent_actor.pth')
-            # torch.save(agent.critic.critic_net, 'agent_critic.pth') 
-            # torch.save(agent.entropy.log_alpha, 'agent_entropy.pth') 
+            print('New best episode: {}'.format(total_reward))
+            torch.save(agent.actor.actor_net, 'agent_actor.pth')
+            torch.save(agent.critic.critic_net, 'agent_critic.pth') 
+            torch.save(agent.entropy.log_alpha, 'agent_entropy.pth') 
             print('----------------------\n')
-            best_reward = episode_reward
+            best_reward = total_reward
 
-        # if episode % 100 == 0 and episode > 0:
-        #     torch.save(agent.actor.actor_net, 'agent_{}.pth'.format(episode))
+        if episode % 100 == 0 and episode > 0:
+            torch.save(agent.actor.actor_net, 'agent_{}.pth'.format(episode))
 
 
 if __name__ == "__main__":
