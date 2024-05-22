@@ -112,13 +112,14 @@ def main():
         while not done:
             # action = [np.random.uniform(-80, 80), np.random.uniform(-80, 80), np.random.choice([0, 1]), np.random.choice([0, 1]), np.random.choice([0, 1])]
             action = agent.actor.choose_action(obs.unsqueeze(0).to(device))
-            print(action)
+            # print(action)
             # pdb.set_trace()
             
             next_obs, reward, done, info = env.step(action.flatten().tolist())
             next_obs = preprocess(next_obs)
             
             # print(obs.shape, np.max(obs), np.min(obs))
+            # print(reward)
             total_reward += reward
             agent.memory.push((obs, action, reward, next_obs, done))
             
