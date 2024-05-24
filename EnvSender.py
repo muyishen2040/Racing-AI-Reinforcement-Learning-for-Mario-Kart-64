@@ -57,8 +57,12 @@ while True:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try_connect()
 
-    data = recv_data()
-    action = pickle.loads(data)
+    try:
+        data = recv_data()
+        action = pickle.loads(data)
+    except:
+        print("Error loading data, maybe connection was closed")
+        continue
     if action == "reset":
         obs = env.reset()
         send_data(obs)

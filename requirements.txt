@@ -4,3 +4,4 @@ tqdm
 argparse
 Pillow
 gym===0.7.4
+pygame
