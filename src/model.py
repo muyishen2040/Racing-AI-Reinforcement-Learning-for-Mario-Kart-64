@@ -3,11 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from torch.distributions import Normal
-
+import pdb
 
 
 class ActorNet(nn.Module):
-    def __init__(self, max_action, input_shape=(1, 84, 84), action_dim=5):
+    def __init__(self, max_action, input_shape=(4, 84, 84), action_dim=5):
         super(ActorNet, self).__init__()
         self.max_action = max_action
         self.conv_layers = nn.Sequential(
@@ -20,10 +20,12 @@ class ActorNet(nn.Module):
             nn.Flatten()
         )
         self.flattened_size = self._get_conv_output(input_shape)
-        self.fc = nn.Linear(self.flattened_size, 512)
-        self.mean = nn.Linear(512, action_dim - 3)
-        self.log_std = nn.Linear(512, action_dim - 3)
-        self.binary_logits = nn.Linear(512, 3)
+        self.fc = nn.Linear(self.flattened_size, 256)
+        self.mean = nn.Linear(256, action_dim - 3)
+        self.log_std = nn.Linear(256, action_dim - 3)
+        self.binary_logits = nn.Linear(256, 3)
+
+        self.forward_bias = nn.Parameter(torch.tensor(10.0))
 
     def _get_conv_output(self, shape):
         with torch.no_grad():
@@ -34,16 +36,18 @@ class ActorNet(nn.Module):
     def forward(self, state):
         x = self.conv_layers(state)
         x = F.relu(self.fc(x))
-        mean = self.max_action[:2]*torch.tanh(self.mean(x))
-        # mean = self.mean(x)
+        # mean = self.max_action[:2]*torch.tanh(self.mean(x))
+        mean = self.mean(x)
         log_std = self.log_std(x)
         log_std = torch.clamp(log_std, -20, 2)
         std = log_std.exp()
         binary_logits = self.binary_logits(x)
+
+        binary_logits[:, 0] += self.forward_bias
         return mean, std, binary_logits
 
 class CriticNet(nn.Module):
-    def __init__(self, input_shape=(1, 84, 84), action_dim=5):
+    def __init__(self, input_shape=(4, 84, 84), action_dim=5):
         super(CriticNet, self).__init__()
         self.conv_layers_q1 = nn.Sequential(
             nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
@@ -63,7 +67,7 @@ class CriticNet(nn.Module):
             nn.Linear(256, 1)
         )
         
-        # self.output_q1 = nn.Linear(512, 1)
+        # self.output_q1 = nn.Linear(256, 1)
 
         self.conv_layers_q2 = nn.Sequential(
             nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
@@ -81,7 +85,7 @@ class CriticNet(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 1)
         )
-        # self.output_q2 = nn.Linear(512, 1)
+        # self.output_q2 = nn.Linear(256, 1)
 
     def _get_conv_output(self, shape):
         with torch.no_grad():
@@ -115,10 +119,14 @@ class Actor:
         mean, std, binary_logits = self.actor_net(state)
         dist = torch.distributions.Normal(mean, std)
         continuous_action = dist.sample()
-        continuous_action = torch.clamp(continuous_action, self.min_action[:2], self.max_action[:2])
-        
-        binary_probs = torch.sigmoid(binary_logits)
-        binary_action = torch.bernoulli(binary_probs)
+        # continuous_action = torch.clamp(continuous_action, self.min_action[:2], self.max_action[:2])
+        continuous_action = torch.tanh(continuous_action)
+        continuous_action = continuous_action * 80
+
+        binary_dist = torch.distributions.Bernoulli(logits=binary_logits)
+        binary_action = binary_dist.sample()
+        # binary_probs = torch.sigmoid(binary_logits)
+        # binary_action = torch.bernoulli(binary_probs)
         
         action = torch.cat([continuous_action, binary_action], dim=-1)
         
@@ -127,23 +135,23 @@ class Actor:
     def evaluate(self, state):
         mean, std, binary_logits = self.actor_net(state)
         dist = torch.distributions.Normal(mean, std)
+        continuous_action = dist.sample()
+        continuous_action_log_prob = dist.log_prob(continuous_action).sum(dim=-1, keepdim=True)
+        continuous_action = torch.tanh(continuous_action)
+        continuous_action = continuous_action * 80
+
+        binary_dist = torch.distributions.Bernoulli(logits=binary_logits)
+        binary_action = binary_dist.sample()
+        binary_action_log_prob = binary_dist.log_prob(binary_action).sum(dim=-1, keepdim=True)
+
         noise = torch.distributions.Normal(0, 1)
         z = noise.sample()
-        continuous_action = torch.tanh(mean + std * z)
-        continuous_action = torch.clamp(continuous_action, self.min_action[:2], self.max_action[:2])
-        
-        binary_probs = torch.sigmoid(binary_logits)
-        binary_action = torch.bernoulli(binary_probs)
-        action = torch.cat([continuous_action, binary_action], dim=-1)
-        
-        action_logprob = dist.log_prob(mean + std * z) - torch.log(1 - continuous_action.pow(2) + 1e-6)
-        action_logprob = action_logprob.sum(dim=-1, keepdim=True)
-        binary_logprob = F.binary_cross_entropy_with_logits(binary_logits, binary_action, reduction='none')
-        binary_logprob = binary_logprob.sum(dim=-1, keepdim=True)
-        
-        total_logprob = action_logprob + binary_logprob
 
-        return action, total_logprob, z, mean, std
+        action_log_prob = continuous_action_log_prob + binary_action_log_prob
+        action = torch.cat([continuous_action, binary_action], dim=-1)
+
+        return action, action_log_prob, z, mean, std
+    
 
     def learn(self, loss):
         self.optimizer.zero_grad()

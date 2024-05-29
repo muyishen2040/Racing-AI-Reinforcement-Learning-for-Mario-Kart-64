@@ -5,6 +5,50 @@ import gym, gym_mupen64plus
 import errno
 import pickle
 import struct
+from collections import deque
+import numpy as np
+
+class SkipWrapper(gym.Wrapper):
+    def __init__(self, env, skip):
+        super(SkipWrapper, self).__init__(env)
+        self._skip = skip
+
+    def step(self, action):
+        total_reward = 0.0
+        done = False
+        for _ in range(self._skip):
+            obs, reward, done, info = self.env.step(action)
+            total_reward += reward
+            if done:
+                break
+        return obs, total_reward, done, info
+
+class FrameStack(gym.Wrapper):
+    def __init__(self, env, k):
+        super(FrameStack, self).__init__(env)
+        self.k = k
+        self.frames = deque([], maxlen=k)
+        shp = env.observation_space.shape
+        self.observation_space = gym.spaces.Box(
+            low=0,
+            high=255,
+            shape=(k, shp[0], shp[1], shp[2])
+        )
+
+    def reset(self):
+        ob = self.env.reset()
+        for _ in range(self.k):
+            self.frames.append(ob)
+        return self._get_ob()
+
+    def step(self, action):
+        ob, reward, done, info = self.env.step(action)
+        self.frames.append(ob)
+        return self._get_ob(), reward, done, info
+
+    def _get_ob(self):
+        return np.concatenate(list(self.frames), axis=0).astype(np.uint8)
+
 
 def try_connect():
     while True:
@@ -45,6 +89,12 @@ port = 12345
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 env = gym.make('Mario-Kart-Luigi-Raceway-v0')
+# ----------------------------------------------
+# skip_frame = 4
+# env = SkipWrapper(env, skip=skip_frame)
+# stack_size = 4
+# env = FrameStack(env, k=stack_size)
+# ----------------------------------------------
 
 while True:
     if is_socket_closed(sock):
