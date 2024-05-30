@@ -140,19 +140,19 @@ def main():
     config = {
         'device': device,
         'gamma': 0.99,
-        'tau': 0.01,
+        'tau': 0.0001,
         'min_action': torch.tensor([-80.0, -80.0, 0, 0, 0]),
         'max_action': torch.tensor([80.0, 80.0, 1, 1, 1]),
         'action_dim': 5,
         'memory_len': 1000000,
         'entropy_lr': 1e-4,
-        'actor_lr': 5e-4,
-        'critic_lr': 5e-4,
+        'actor_lr': 3e-4,
+        'critic_lr': 3e-4,
         'batch_size': 256,
         'episodes': 10000,
         'skip_frame': 4,
         'stack_frame': 4,
-        'replay_buffer_warmup': 0
+        'replay_buffer_warmup': 1000
         # 'warmup_steps': 1000,
         # 'expert_data': 'replay_buffer.pkl'
     }
@@ -160,7 +160,7 @@ def main():
     orig_env = EnvReceiver()
     # skip_env = FrameSkip(orig_env, config['skip_frame'])
     env = FrameStack(orig_env, config['stack_frame'])
-    reward_buffer = deque([], maxlen=50)
+    reward_buffer = deque([], maxlen=90)
     
     # preprocess = transforms.Compose([
     #     transforms.ToPILImage(),
@@ -193,6 +193,11 @@ def main():
         while not done:
             cur_step += 1
             step_in_episode += 1
+
+            if cur_step == config['replay_buffer_warmup']:
+                print('------------------------------')
+                print('--------Training Start--------')
+                print('------------------------------')
             
             if cur_step % 10000 == 0:
                 print('Current Training Step:', cur_step)
@@ -224,7 +229,7 @@ def main():
                 # print(agent.actor.actor_net.forward_bias)
                 # print('update')
             
-            if step_in_episode > 70 and sum(reward_buffer) / len(reward_buffer) <= -0.099:
+            if step_in_episode > 90 and sum(reward_buffer) / len(reward_buffer) <= -0.099:
                 break
             
         
