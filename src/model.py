@@ -135,20 +135,28 @@ class Actor:
     def evaluate(self, state):
         mean, std, binary_logits = self.actor_net(state)
         dist = torch.distributions.Normal(mean, std)
-        continuous_action = dist.sample()
-        continuous_action_log_prob = dist.log_prob(continuous_action).sum(dim=-1, keepdim=True)
-        continuous_action = torch.tanh(continuous_action)
-        continuous_action = continuous_action * 80
+        
+        noise = torch.distributions.Normal(0, 1)
+        z = noise.sample()
+        
+        continuous_action = mean + std * z
+        scaled_action = torch.tanh(continuous_action) * 80.0
+        continuous_action_log_prob = dist.log_prob(continuous_action).sum(dim=-1, keepdim=True) - torch.log(1 - torch.tanh(continuous_action).pow(2) + 1e-6).sum(dim=-1, keepdim=True)
+        
+        
+        # continuous_action = dist.sample()
+        # continuous_action_log_prob = dist.log_prob(continuous_action).sum(dim=-1, keepdim=True)
+        # continuous_action = torch.tanh(continuous_action)
+        # continuous_action = continuous_action * 80
 
         binary_dist = torch.distributions.Bernoulli(logits=binary_logits)
         binary_action = binary_dist.sample()
         binary_action_log_prob = binary_dist.log_prob(binary_action).sum(dim=-1, keepdim=True)
 
-        noise = torch.distributions.Normal(0, 1)
-        z = noise.sample()
+        
 
         action_log_prob = continuous_action_log_prob + binary_action_log_prob
-        action = torch.cat([continuous_action, binary_action], dim=-1)
+        action = torch.cat([scaled_action, binary_action], dim=-1)
 
         return action, action_log_prob, z, mean, std
     
