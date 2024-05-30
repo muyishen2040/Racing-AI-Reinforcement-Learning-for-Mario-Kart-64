@@ -112,7 +112,7 @@ class FrameStack():
         self.preprocess = transforms.Compose([
             transforms.ToPILImage(),
             transforms.Grayscale(),
-            transforms.Resize((84, 84)),
+            transforms.Resize((128, 128)),
             transforms.ToTensor()
         ])
 
@@ -140,7 +140,7 @@ def main():
     config = {
         'device': device,
         'gamma': 0.99,
-        'tau': 0.0001,
+        'tau': 0.01,
         'min_action': torch.tensor([-80.0, -80.0, 0, 0, 0]),
         'max_action': torch.tensor([80.0, 80.0, 1, 1, 1]),
         'action_dim': 5,
@@ -239,7 +239,7 @@ def main():
         if total_reward > best_reward:
             print('\n----------------------')
             print('New best episode: {}'.format(total_reward))
-            torch.save(agent.actor.actor_net, 'agdent_actor.pth')
+            torch.save(agent.actor.actor_net, 'agent_actor.pth')
             torch.save(agent.critic.critic_net, 'agent_critic.pth') 
             torch.save(agent.entropy.log_alpha, 'agent_entropy.pth') 
             print('----------------------\n')

@@ -7,7 +7,7 @@ import pdb
 
 
 class ActorNet(nn.Module):
-    def __init__(self, max_action, input_shape=(4, 84, 84), action_dim=5):
+    def __init__(self, max_action, input_shape=(4, 128, 128), action_dim=5):
         super(ActorNet, self).__init__()
         self.max_action = max_action
         self.conv_layers = nn.Sequential(
@@ -15,15 +15,24 @@ class ActorNet(nn.Module):
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.Conv2d(64, 128, kernel_size=3, stride=1),
             nn.ReLU(),
             nn.Flatten()
         )
         self.flattened_size = self._get_conv_output(input_shape)
-        self.fc = nn.Linear(self.flattened_size, 256)
-        self.mean = nn.Linear(256, action_dim - 3)
-        self.log_std = nn.Linear(256, action_dim - 3)
-        self.binary_logits = nn.Linear(256, 3)
+        self.fc = nn.Linear(self.flattened_size, 512)
+        self.mean = nn.Sequential(
+            nn.Linear(512, 256),
+            nn.Linear(256, action_dim - 3)
+        )
+        self.log_std = nn.Sequential(
+            nn.Linear(512, 256),
+            nn.Linear(256, action_dim - 3)
+        )
+        self.binary_logits = nn.Sequential(
+            nn.Linear(512, 256),
+            nn.Linear(256, 3)
+        )
 
         self.forward_bias = nn.Parameter(torch.tensor(10.0))
 
@@ -47,22 +56,22 @@ class ActorNet(nn.Module):
         return mean, std, binary_logits
 
 class CriticNet(nn.Module):
-    def __init__(self, input_shape=(4, 84, 84), action_dim=5):
+    def __init__(self, input_shape=(4, 128, 128), action_dim=5):
         super(CriticNet, self).__init__()
         self.conv_layers_q1 = nn.Sequential(
             nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.Conv2d(64, 128, kernel_size=3, stride=1),
             nn.ReLU(),
             nn.Flatten()
         )
         self.flattened_size = self._get_conv_output(input_shape)
         self.fc_q1 = nn.Sequential(
-            nn.Linear(self.flattened_size + action_dim, 256),
+            nn.Linear(self.flattened_size + action_dim, 512),
             nn.ReLU(),
-            nn.Linear(256, 256),
+            nn.Linear(512, 256),
             nn.ReLU(),
             nn.Linear(256, 1)
         )
@@ -74,14 +83,14 @@ class CriticNet(nn.Module):
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.Conv2d(64, 128, kernel_size=3, stride=1),
             nn.ReLU(),
             nn.Flatten()
         )
         self.fc_q2 = nn.Sequential(
-            nn.Linear(self.flattened_size + action_dim, 256),
+            nn.Linear(self.flattened_size + action_dim, 512),
             nn.ReLU(),
-            nn.Linear(256, 256),
+            nn.Linear(512, 256),
             nn.ReLU(),
             nn.Linear(256, 1)
         )
@@ -113,6 +122,8 @@ class Actor:
         self.min_action = min_action.to(device)
         self.max_action = max_action.to(device)
         self.actor_net = ActorNet(self.max_action).to(device)
+        # self.actor_net = torch.load('checkpoint/agent_actor.pth')
+        # self.actor_net.forward_bias = nn.Parameter(torch.tensor(0.0))
         self.optimizer = torch.optim.Adam(self.actor_net.parameters(), lr=self.actor_lr)
 
     def choose_action(self, state):
@@ -174,6 +185,8 @@ class Critic:
         self.device = device
         self.critic_net = CriticNet().to(device)
         self.target_net = CriticNet().to(device)
+        # self.critic_net = torch.load('checkpoint/agent_critic.pth')
+        # self.target_net = torch.load('checkpoint/agent_critic.pth')
         self.optimizer = torch.optim.Adam(self.critic_net.parameters(), lr=critic_lr, eps=1e-5)
         self.loss_func = nn.MSELoss()
 
@@ -199,6 +212,7 @@ class Entropy:
         self.entropy_lr = entropy_lr
         self.target_entropy = -action_dim
         self.log_alpha = torch.zeros(1, requires_grad=True, device=device)
+        # self.log_alpha = torch.load('checkpoint/agent_entropy.pth')
         self.alpha = self.log_alpha.exp()
         self.optimizer = torch.optim.Adam([self.log_alpha], lr=entropy_lr)
 
