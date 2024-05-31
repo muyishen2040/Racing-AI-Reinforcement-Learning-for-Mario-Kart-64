@@ -45,7 +45,6 @@ class ActorNet(nn.Module):
     def forward(self, state):
         x = self.conv_layers(state)
         x = F.relu(self.fc(x))
-        # mean = self.max_action[:2]*torch.tanh(self.mean(x))
         mean = self.mean(x)
         log_std = self.log_std(x)
         log_std = torch.clamp(log_std, -20, 2)
@@ -75,8 +74,6 @@ class CriticNet(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 1)
         )
-        
-        # self.output_q1 = nn.Linear(256, 1)
 
         self.conv_layers_q2 = nn.Sequential(
             nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
@@ -94,7 +91,6 @@ class CriticNet(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 1)
         )
-        # self.output_q2 = nn.Linear(256, 1)
 
     def _get_conv_output(self, shape):
         with torch.no_grad():
@@ -105,12 +101,10 @@ class CriticNet(nn.Module):
     def forward(self, state, action):
         state_features_q1 = self.conv_layers_q1(state)
         q1 = torch.cat([state_features_q1, action], 1)
-        # q1 = self.output_q1(F.relu(self.fc_q1(q1)))
         q1 = self.fc_q1(q1)
 
         state_features_q2 = self.conv_layers_q2(state)
         q2 = torch.cat([state_features_q2, action], 1)
-        # q2 = self.output_q2(F.relu(self.fc_q2(q2)))
         q2 = self.fc_q2(q2)
         return q1, q2
     
@@ -122,7 +116,7 @@ class Actor:
         self.min_action = min_action.to(device)
         self.max_action = max_action.to(device)
         self.actor_net = ActorNet(self.max_action).to(device)
-        # self.actor_net = torch.load('checkpoint/agent_actor.pth')
+        self.actor_net = torch.load('checkpoint/agent_actor.pth')
         # self.actor_net.forward_bias = nn.Parameter(torch.tensor(0.0))
         self.optimizer = torch.optim.Adam(self.actor_net.parameters(), lr=self.actor_lr)
 
@@ -130,14 +124,11 @@ class Actor:
         mean, std, binary_logits = self.actor_net(state)
         dist = torch.distributions.Normal(mean, std)
         continuous_action = dist.sample()
-        # continuous_action = torch.clamp(continuous_action, self.min_action[:2], self.max_action[:2])
         continuous_action = torch.tanh(continuous_action)
         continuous_action = continuous_action * 80
 
         binary_dist = torch.distributions.Bernoulli(logits=binary_logits)
         binary_action = binary_dist.sample()
-        # binary_probs = torch.sigmoid(binary_logits)
-        # binary_action = torch.bernoulli(binary_probs)
         
         action = torch.cat([continuous_action, binary_action], dim=-1)
         
@@ -153,18 +144,10 @@ class Actor:
         continuous_action = mean + std * z
         scaled_action = torch.tanh(continuous_action) * 80.0
         continuous_action_log_prob = dist.log_prob(continuous_action).sum(dim=-1, keepdim=True) - torch.log(1 - torch.tanh(continuous_action).pow(2) + 1e-6).sum(dim=-1, keepdim=True)
-        
-        
-        # continuous_action = dist.sample()
-        # continuous_action_log_prob = dist.log_prob(continuous_action).sum(dim=-1, keepdim=True)
-        # continuous_action = torch.tanh(continuous_action)
-        # continuous_action = continuous_action * 80
 
         binary_dist = torch.distributions.Bernoulli(logits=binary_logits)
         binary_action = binary_dist.sample()
         binary_action_log_prob = binary_dist.log_prob(binary_action).sum(dim=-1, keepdim=True)
-
-        
 
         action_log_prob = continuous_action_log_prob + binary_action_log_prob
         action = torch.cat([scaled_action, binary_action], dim=-1)
@@ -185,8 +168,8 @@ class Critic:
         self.device = device
         self.critic_net = CriticNet().to(device)
         self.target_net = CriticNet().to(device)
-        # self.critic_net = torch.load('checkpoint/agent_critic.pth')
-        # self.target_net = torch.load('checkpoint/agent_critic.pth')
+        self.critic_net = torch.load('checkpoint/agent_critic.pth')
+        self.target_net = torch.load('checkpoint/agent_critic.pth')
         self.optimizer = torch.optim.Adam(self.critic_net.parameters(), lr=critic_lr, eps=1e-5)
         self.loss_func = nn.MSELoss()
 
@@ -212,7 +195,7 @@ class Entropy:
         self.entropy_lr = entropy_lr
         self.target_entropy = -action_dim
         self.log_alpha = torch.zeros(1, requires_grad=True, device=device)
-        # self.log_alpha = torch.load('checkpoint/agent_entropy.pth')
+        self.log_alpha = torch.load('checkpoint/agent_entropy.pth')
         self.alpha = self.log_alpha.exp()
         self.optimizer = torch.optim.Adam([self.log_alpha], lr=entropy_lr)
 
@@ -220,13 +203,3 @@ class Entropy:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-
-
-# min_action = torch.tensor([-1.0, 0.0, 0.0])
-# max_action = torch.tensor([1.0, 1.0, 1.0])
-# device = 'cpu'
-
-# actor = Actor(device, 0.1, min_action, max_action)
-
-# import pdb
-# pdb.set_trace()

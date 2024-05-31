@@ -145,30 +145,32 @@ def main():
         'max_action': torch.tensor([80.0, 80.0, 1, 1, 1]),
         'action_dim': 5,
         'memory_len': 1000000,
-        'entropy_lr': 1e-4,
-        'actor_lr': 3e-4,
-        'critic_lr': 3e-4,
+        
+        # Learning rates for the first stage training
+        # 'entropy_lr': 1e-4,
+        # 'actor_lr': 3e-4,
+        # 'critic_lr': 3e-4,
+        
+        # Learning rates for the second stage training
+        'entropy_lr': 1e-5,
+        'actor_lr': 3e-5,
+        'critic_lr': 3e-5,
         'batch_size': 256,
         'episodes': 10000,
         'skip_frame': 4,
         'stack_frame': 4,
-        'replay_buffer_warmup': 1000
+        'replay_buffer_warmup': 2000
         # 'warmup_steps': 1000,
         # 'expert_data': 'replay_buffer.pkl'
     }
 
     orig_env = EnvReceiver()
+    
+    # The skip_env is commented since the original env has already employ frame skipping (5) 
     # skip_env = FrameSkip(orig_env, config['skip_frame'])
+    
     env = FrameStack(orig_env, config['stack_frame'])
     reward_buffer = deque([], maxlen=90)
-    
-    # preprocess = transforms.Compose([
-    #     transforms.ToPILImage(),
-    #     transforms.Grayscale(),
-    #     transforms.Resize((84, 84)),
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(mean=[0.5], std=[0.5])
-    # ])
     
     agent = SAC(config)
     
@@ -180,7 +182,6 @@ def main():
         done = False
         obs = env.reset()
         reward_buffer.clear()
-        # obs = preprocess(obs)
         
         # The following code snippet save the observation stack into 4 image files
         # obs_np = obs.numpy()
@@ -202,20 +203,11 @@ def main():
             if cur_step % 10000 == 0:
                 print('Current Training Step:', cur_step)
             
-            # action = [np.random.uniform(-80, 80), np.random.uniform(-80, 80), np.random.choice([0, 1]), np.random.choice([0, 1]), np.random.choice([0, 1])]
             action = agent.actor.choose_action(obs.unsqueeze(0).to(device))
-            # action = np.array([0, 80, 1, 0, 0])
             # print(action)
             
             next_obs, reward, done, info = env.step(action.flatten().tolist())
             reward_buffer.append(reward)
-            # image = Image.fromarray(next_obs.astype('uint8'))
-            # image.save('observation.png')
-            # pdb.set_trace()
-
-            # next_obs = preprocess(next_obs)
-            
-            # print(obs.shape, np.max(obs), np.min(obs))
             # print(reward)
             total_reward += reward
             
@@ -227,10 +219,10 @@ def main():
             if len(agent.memory) > config['batch_size'] and len(agent.memory) > config['replay_buffer_warmup']:
                 agent.update()
                 # print(agent.actor.actor_net.forward_bias)
-                # print('update')
             
-            if step_in_episode > 90 and sum(reward_buffer) / len(reward_buffer) <= -0.099:
-                break
+            # For the first training stage, uncomment the following code snippet to enable early stop
+            # if step_in_episode > 90 and sum(reward_buffer) / len(reward_buffer) <= -0.099:
+            #     break
             
         
         writer.add_scalar("Reward/episode", total_reward, episode)
