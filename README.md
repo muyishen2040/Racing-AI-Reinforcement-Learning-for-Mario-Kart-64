@@ -1,4 +1,12 @@
-# DRL Final Project - MarioKart64
+# Racing AI: Reinforcement Learning for Mario Kart 64
+
+## Acknowledgements
+
+This project is a fork of an original repository that provided the base environment for Mario Kart 64. The original repository can be found here: [Original Repository](https://github.com/bzier/gym-mupen64plus).
+
+## Introduction
+
+The environment in the original repository was based on Python 2, which restricts the use of modern reinforcement learning libraries such as the latest versions of PyTorch and TensorFlow. Directly updating the Python version in the Docker container led to execution issues. Therefore, this repository maintains the original Python 2 environment and uses a socket-based approach to interface with a Python 3 environment for executing reinforcement learning programs.
 
 ## Setup
 
@@ -8,15 +16,15 @@ The easiest, cleanest, most consistent way to get up and running with this proje
 
 **Pre-requisites:**
 - Docker & docker-compose
-- Ensure you have a copy of the ROMs you wish to use, and make sure it is placed inside the path under `gym_mupen64plus/ROMs` 
+- Ensure you have a copy of the ROMs you wish to use, and make sure it is placed inside the path under `gym_mupen64plus/ROMs`.
 
 **Steps:**
 
 0. Clone the repository and get into the root folder of the project.
 
-1. Run the docker compose of the game environment using
+1. Run the docker compose of the game environment using:
 
-    ```
+    ```bash
     docker-compose up --build -d
     ```
 
@@ -26,37 +34,37 @@ The easiest, cleanest, most consistent way to get up and running with this proje
     - `agent` runs the example python script
     - `emulator` runs the mupen64plus emulator
 
-2. Under the root of the repository, there is a python3 file `SocketWrapper.py`. This file conatins the wrapper of our RL training. We can first create a virtual environment of our project by:
+2. Under the root of the repository, there is a Python 3 file `SocketWrapper.py`. This file contains the wrapper for our RL training. We can first create a virtual environment for our project by:
 
-    ```
+    ```bash
     python -m venv RL_env
     ```
 
     Activate the environment:
-    ```
+    ```bash
     source RL_env/bin/activate
     ```
 
     Install the required packages:
-    ```
+    ```bash
     pip install -r requirements.txt
     ```
 
     In your training script:
-    ``` python
+    ```python
     from SocketWrapper import SocketWrapper
     env = SocketWrapper()
     ```
 
 3. Then you can use your favorite VNC client (e.g., [VNC Viewer](https://www.realvnc.com/en/connect/download/viewer/)) to connect to `localhost` to watch the XVFB display in real-time. Note that running the VNC server and client can cause some performance overhead.
 
-    For VSCode & TightVNC Users
-    - Forward the port 5900 to the desired port on the local host
-    - Open tightVNC and connect to `localhost::desired_port_num`, e.g. `localhost::5901`
+    For VSCode & TightVNC Users:
+    - Forward the port 5900 to the desired port on the local host.
+    - Open TightVNC and connect to `localhost::desired_port_num`, e.g. `localhost::5901`.
 
 4. To turn off the docker compose container, use the following command:
 
-    ```
+    ```bash
     docker-compose down
     ```
 
@@ -64,9 +72,16 @@ The easiest, cleanest, most consistent way to get up and running with this proje
 
 1. To view the status (output log) of a single compose, you can use the following command:
 
-    ```
+    ```bash
     docker-compose logs xvfbsrv
     docker-compose logs vncsrv
     docker-compose logs emulator
     docker-compose logs agent
     ```
+
+## Features
+
+- **SAC Training Script**: A script to train a Soft Actor-Critic (SAC) agent.
+- **Grad-CAM Visualization**: Tools to visualize the learned features using Grad-CAM.
+
+This repository enhances the Mario Kart 64 Gym Environment with modern reinforcement learning capabilities. Follow the setup instructions to get started with training and visualizing your own AI agents in Mario Kart 64.
