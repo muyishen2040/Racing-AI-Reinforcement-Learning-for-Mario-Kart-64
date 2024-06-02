@@ -1,202 +1,136 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
-from torch.distributions import Normal
 
-
-
-class ActorNet(nn.Module):
-    def __init__(self, max_action, input_shape=(1, 84, 84), action_dim=5):
-        super(ActorNet, self).__init__()
-        self.max_action = max_action
-        self.conv_layers = nn.Sequential(
-            nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
-            nn.ReLU(),
-            nn.Flatten()
+class QNetwork(torch.nn.Module):
+    def __init__(self, input_shape, n_actions_c, n_actions_d):
+        super(QNetwork, self).__init__()
+        self.conv1 = torch.nn.Sequential(
+            torch.nn.Conv2d(input_shape[1], 256, kernel_size=8, stride=4),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(256, 256, kernel_size=4, stride=2),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(256, 256, kernel_size=4, stride=2),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(256, 128, kernel_size=3, stride=1),
+            torch.nn.ReLU()
         )
-        self.flattened_size = self._get_conv_output(input_shape)
-        self.fc = nn.Linear(self.flattened_size, 512)
-        self.mean = nn.Linear(512, action_dim - 3)
-        self.log_std = nn.Linear(512, action_dim - 3)
-        self.binary_logits = nn.Linear(512, 3)
-
-    def _get_conv_output(self, shape):
-        with torch.no_grad():
-            input = torch.zeros(1, *shape)
-            output = self.conv_layers(input)
-            return int(np.prod(output.size()))
-
-    def forward(self, state):
-        x = self.conv_layers(state)
-        x = F.relu(self.fc(x))
-        mean = self.max_action[:2]*torch.tanh(self.mean(x))
-        # mean = self.mean(x)
-        log_std = self.log_std(x)
-        log_std = torch.clamp(log_std, -20, 2)
-        std = log_std.exp()
-        binary_logits = self.binary_logits(x)
-        return mean, std, binary_logits
-
-class CriticNet(nn.Module):
-    def __init__(self, input_shape=(1, 84, 84), action_dim=5):
-        super(CriticNet, self).__init__()
-        self.conv_layers_q1 = nn.Sequential(
-            nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
-            nn.ReLU(),
-            nn.Flatten()
+        self.conv2 = torch.nn.Sequential(
+            torch.nn.Conv2d(input_shape[1], 256, kernel_size=8, stride=4),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(256, 256, kernel_size=4, stride=2),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(256, 256, kernel_size=4, stride=2),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(256, 128, kernel_size=3, stride=1),
+            torch.nn.ReLU()
         )
-        self.flattened_size = self._get_conv_output(input_shape)
-        self.fc_q1 = nn.Sequential(
-            nn.Linear(self.flattened_size + action_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1)
+
+        conv_out_size = self._get_conv_out(input_shape)
+        self.valueNet1 = torch.nn.Sequential(
+            torch.nn.Linear(conv_out_size + n_actions_c, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, n_actions_d)
         )
-        
-        # self.output_q1 = nn.Linear(512, 1)
-
-        self.conv_layers_q2 = nn.Sequential(
-            nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
-            nn.ReLU(),
-            nn.Flatten()
+        self.valueNet2 = torch.nn.Sequential(
+            torch.nn.Linear(conv_out_size + n_actions_c, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, n_actions_d)
         )
-        self.fc_q2 = nn.Sequential(
-            nn.Linear(self.flattened_size + action_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1)
-        )
-        # self.output_q2 = nn.Linear(512, 1)
 
-    def _get_conv_output(self, shape):
-        with torch.no_grad():
-            input = torch.zeros(1, *shape)
-            output = self.conv_layers_q1(input)
-            return int(np.prod(output.size()))
+    def _get_conv_out(self, shape):
+        o = self.conv1(torch.zeros(shape))
+        return int(np.prod(o.size()))
 
-    def forward(self, state, action):
-        state_features_q1 = self.conv_layers_q1(state)
-        q1 = torch.cat([state_features_q1, action], 1)
-        # q1 = self.output_q1(F.relu(self.fc_q1(q1)))
-        q1 = self.fc_q1(q1)
-
-        state_features_q2 = self.conv_layers_q2(state)
-        q2 = torch.cat([state_features_q2, action], 1)
-        # q2 = self.output_q2(F.relu(self.fc_q2(q2)))
-        q2 = self.fc_q2(q2)
+    def forward(self, state: torch.Tensor, action: torch.Tensor):
+        # assumes input is uint8
+        state = state.to(torch.float32) / 255.
+        conv_out1 = self.conv1(state).reshape(state.size()[0], -1)
+        conv_out2 = self.conv2(state).reshape(state.size()[0], -1)
+        q1 = self.valueNet1(torch.cat([conv_out1, action], dim=1))
+        q2 = self.valueNet2(torch.cat([conv_out2, action], dim=1))
         return q1, q2
     
+class PolicyNetwork(torch.nn.Module):
+    def __init__(self, input_shape, n_actions_c, n_actions_d, action_c_scale, action_c_bias):
+        super(PolicyNetwork, self).__init__()
+        self.action_c_scale = action_c_scale
+        self.action_c_bias = action_c_bias
+        self.conv = torch.nn.Sequential(
+            torch.nn.Conv2d(input_shape[1], 256, kernel_size=8, stride=4),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(256, 256, kernel_size=4, stride=2),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(256, 256, kernel_size=4, stride=2),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(256, 128, kernel_size=3, stride=1),
+            torch.nn.ReLU()
+        )
+        conv_out_size = self._get_conv_out(input_shape)
+        self.meanNet = torch.nn.Sequential(
+            torch.nn.Linear(conv_out_size, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, n_actions_c)
+        )
+        self.logNet = torch.nn.Sequential(
+            torch.nn.Linear(conv_out_size, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, n_actions_c)
+        )
+        self.dNet = torch.nn.Sequential(
+            torch.nn.Linear(conv_out_size, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, n_actions_d)
+        )
 
-class Actor:
-    def __init__(self, device, actor_lr, min_action, max_action):
-        self.device = device
-        self.actor_lr = actor_lr
-        self.min_action = min_action.to(device)
-        self.max_action = max_action.to(device)
-        self.actor_net = ActorNet(self.max_action).to(device)
-        self.optimizer = torch.optim.Adam(self.actor_net.parameters(), lr=self.actor_lr)
+    def _get_conv_out(self, shape):
+        o = self.conv(torch.zeros(shape))
+        return int(np.prod(o.size()))
 
-    def choose_action(self, state):
-        mean, std, binary_logits = self.actor_net(state)
-        dist = torch.distributions.Normal(mean, std)
-        continuous_action = dist.sample()
-        continuous_action = torch.clamp(continuous_action, self.min_action[:2], self.max_action[:2])
+    def forward(self, state: torch.Tensor):
+        # assumes input is uint8
+        state = state.to(torch.float32) / 255.
+        conv_out = self.conv(state).reshape(state.size()[0], -1)
+        mean = self.meanNet(conv_out)
+        log_std = self.logNet(conv_out)
+        log_std = torch.clamp(log_std, min=-20, max=2)
+        action_d = self.dNet(conv_out)
+        return mean, log_std, action_d # logits
+    
+    def sample(self, state: torch.Tensor):
+        mean, log_std, logits_d = self.forward(state)
+        std = torch.exp(log_std)
+        normal = torch.distributions.Normal(mean, std)
+        sample_c = normal.rsample()
+        squashed_sample_c = torch.tanh(sample_c)
+        action_c = squashed_sample_c * self.action_c_scale + self.action_c_bias
+        log_prob_c = normal.log_prob(sample_c) - torch.log(self.action_c_scale * (1 - squashed_sample_c.pow(2)) + 1e-6)
+        log_prob_c = log_prob_c.sum(1, keepdim=True)
         
-        binary_probs = torch.sigmoid(binary_logits)
-        binary_action = torch.bernoulli(binary_probs)
+        categorical = torch.distributions.Categorical(logits=logits_d)
+        action_d = categorical.sample()
+        log_prob_d = categorical.log_prob(action_d).unsqueeze(1)
         
-        action = torch.cat([continuous_action, binary_action], dim=-1)
-        
-        return action.detach().cpu().numpy()
+        deterministic_action_c = torch.tanh(mean) * self.action_c_scale + self.action_c_bias
+        deterministic_action_d = torch.argmax(logits_d, dim=1)
 
-    def evaluate(self, state):
-        mean, std, binary_logits = self.actor_net(state)
-        dist = torch.distributions.Normal(mean, std)
-        noise = torch.distributions.Normal(0, 1)
-        z = noise.sample()
-        continuous_action = torch.tanh(mean + std * z)
-        continuous_action = torch.clamp(continuous_action, self.min_action[:2], self.max_action[:2])
-        
-        binary_probs = torch.sigmoid(binary_logits)
-        binary_action = torch.bernoulli(binary_probs)
-        action = torch.cat([continuous_action, binary_action], dim=-1)
-        
-        action_logprob = dist.log_prob(mean + std * z) - torch.log(1 - continuous_action.pow(2) + 1e-6)
-        action_logprob = action_logprob.sum(dim=-1, keepdim=True)
-        binary_logprob = F.binary_cross_entropy_with_logits(binary_logits, binary_action, reduction='none')
-        binary_logprob = binary_logprob.sum(dim=-1, keepdim=True)
-        
-        total_logprob = action_logprob + binary_logprob
-
-        return action, total_logprob, z, mean, std
-
-    def learn(self, loss):
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
-
-class Critic:
-    def __init__(self, device, critic_lr, tau):
-        self.tau = tau
-        self.critic_lr = critic_lr
-        self.device = device
-        self.critic_net = CriticNet().to(device)
-        self.target_net = CriticNet().to(device)
-        self.optimizer = torch.optim.Adam(self.critic_net.parameters(), lr=critic_lr, eps=1e-5)
-        self.loss_func = nn.MSELoss()
-
-    def update(self):
-        for target_param, param in zip(self.target_net.parameters(), self.critic_net.parameters()):
-            target_param.data.copy_(target_param.data * (1.0 - self.tau) + param.data * self.tau)
-
-    def get_q_value(self, state, action):
-        return self.critic_net(state, action)
-
-    def get_target_q_value(self, state, action):
-        return self.target_net(state, action)
-
-    def learn(self, current_q1, current_q2, target_q):
-        loss = self.loss_func(current_q1, target_q) + self.loss_func(current_q2, target_q)
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
-
-class Entropy:
-    def __init__(self, device, entropy_lr, action_dim=5):
-        self.entropy_lr = entropy_lr
-        self.target_entropy = -action_dim
-        self.log_alpha = torch.zeros(1, requires_grad=True, device=device)
-        self.alpha = self.log_alpha.exp()
-        self.optimizer = torch.optim.Adam([self.log_alpha], lr=entropy_lr)
-
-    def learn(self, loss):
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
-
-# min_action = torch.tensor([-1.0, 0.0, 0.0])
-# max_action = torch.tensor([1.0, 1.0, 1.0])
-# device = 'cpu'
-
-# actor = Actor(device, 0.1, min_action, max_action)
-
-# import pdb
-# pdb.set_trace()
+        return action_c, action_d, log_prob_c, log_prob_d, deterministic_action_c, deterministic_action_d

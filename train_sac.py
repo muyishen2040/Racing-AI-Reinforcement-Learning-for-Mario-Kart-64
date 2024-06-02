@@ -1,149 +1,81 @@
-from EnvReceiver import EnvReceiver
 import numpy as np
-from src.model import *
-import collections
-import random
 import torch
-import pdb
 from torch.utils.tensorboard import SummaryWriter
-import torchvision.transforms as transforms
-import gym
+from tqdm import tqdm
+from src.model import *
+from src.utils import *
+from src.agent import *
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+if __name__ == '__main__':
+    torch.autograd.set_detect_anomaly(True)
+    frame_stack = 4
+    env, obs_shape = make_env(frame_stack)
+    config = AgentConfig(
+        state_dims=obs_shape,
+        action_c_dims=1,
+        action_d_dims=2**3,
+        action_scale=80,
+        action_bias=0,
+        frame_stack=frame_stack,
+        lr=1e-7,
+        entropy_lr=1e-3,
+        gamma=0.999,
+        tau=0.001,
+        memory_size=100000,
+        batch_size=256,
+        device='cuda'
+    )
+    writer = SummaryWriter(f"runs/{config}")
+    print(config)
 
-class ReplayBuffer():
-    def __init__(self, buffer_maxlen):
-        self.buffer = collections.deque(maxlen=buffer_maxlen)
-        self.sequence_length = 16
+    agent = Agent(config)
+    num_episodes = 10000
+    save_ep = 100
+    draw_ep = 10
+    highest_reward = -9999
+    pbar = tqdm(range(num_episodes))
 
-    def push(self, sequence):
-        self.buffer.append(sequence)
-
-    def sample(self, batch_size):
-        batch = random.sample(self.buffer, batch_size)
-
-        observation, actions, rewards, next_observations, dones = zip(*batch)
-        
-        observation = torch.stack(observation).to(device)
-        actions = torch.from_numpy(np.array(actions)).to(device)
-        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(device)
-        next_observations = torch.stack(next_observations).to(device)
-        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(device)
-
-        return observation, actions, rewards, next_observations, dones
-
-    def __len__(self):
-        return len(self.buffer)
-
-
-class SAC:
-    def __init__(self, config):
-        self.config = config
-        self.memory = ReplayBuffer(config['memory_len'])
-        self.actor = Actor(config['device'], config['actor_lr'], config['min_action'], config['max_action'])
-        self.critic = Critic(config['device'], config['critic_lr'], config['tau'])
-        self.entropy = Entropy(config['device'], config['entropy_lr'], config['action_dim'])
-
-    def update(self):
-        states, actions, rewards, next_states, dones = self.memory.sample(self.config['batch_size'])
-        new_action, log_prob_, z, mean, log_std = self.actor.evaluate(next_states)
-
-        target_q1, target_q2 = self.critic.get_target_q_value(next_states, new_action)
-
-        log_prob_ = log_prob_.sum(dim=1, keepdim=True)
-        target_q = rewards + (1 - dones) * self.config['gamma'] * (torch.min(target_q1, target_q2) - self.entropy.alpha * log_prob_)
-
-        actions = actions.squeeze()
-        current_q1, current_q2 = self.critic.get_q_value(states, actions)
-        self.critic.learn(current_q1, current_q2, target_q.detach())
-
-        a_, log_prob, _, _, _ = self.actor.evaluate(states)
-        log_prob = log_prob.sum(dim=1, keepdim=True)
-        
-        q1, q2 = self.critic.get_q_value(states, a_)
-        q = torch.min(q1, q2)
-        actor_loss = (self.entropy.alpha * log_prob - q).mean()
-        self.actor.learn(actor_loss)
-
-        alpha_loss = -(self.entropy.log_alpha.exp() * (log_prob + self.entropy.target_entropy).detach()).mean()
-        self.entropy.learn(alpha_loss)
-        self.entropy.alpha = self.entropy.log_alpha.exp()
-
-        self.critic.update()
-        
-
-def main():
-
-    writer = SummaryWriter()
-    env = EnvReceiver()
-    
-    config = {
-        'device': device,
-        'gamma': 0.99,
-        'tau': 0.01,
-        'min_action': torch.tensor([-80.0, -80.0, 0, 0, 0]),
-        'max_action': torch.tensor([80.0, 80.0, 1, 1, 1]),
-        'action_dim': 5,
-        'memory_len': 4000000,
-        'entropy_lr': 1e-4,
-        'actor_lr': 5e-4,
-        'critic_lr': 5e-4,
-        'batch_size': 256,
-        'episodes': 10000
-    }
-    
-    preprocess = transforms.Compose([
-        transforms.ToPILImage(),
-        transforms.Grayscale(),
-        transforms.Resize((84, 84)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5], std=[0.5])
-    ])
-    
-    agent = SAC(config)
-    best_reward = -10000.0
-    
-    for episode in range(config['episodes']):
+    for ep in pbar:
+        state = env.reset()
+        state = agent.preprocess_obs(state)
         total_reward = 0
-        done = False
-        obs = env.reset()
-        obs = preprocess(obs)
-        
-        while not done:
-            # action = [np.random.uniform(-80, 80), np.random.uniform(-80, 80), np.random.choice([0, 1]), np.random.choice([0, 1]), np.random.choice([0, 1])]
-            action = agent.actor.choose_action(obs.unsqueeze(0).to(device))
-            # print(action)
-            # pdb.set_trace()
-            
-            next_obs, reward, done, info = env.step(action.flatten().tolist())
-            next_obs = preprocess(next_obs)
-            
-            # print(obs.shape, np.max(obs), np.min(obs))
-            # print(reward)
+        step = 0
+        total_q_loss = 0
+        total_policy_loss = 0
+        total_alpha_loss = 0
+        while True:
+            step += 1
+            action = agent.act(state, random=False)
+            next_state, reward, done, info = env.step(action)
+            next_state = agent.preprocess_obs(next_state)
+            agent.replay_buffer.store_transition(state, action[0], ACTIONS2IDX[tuple(action[2:])], reward, next_state, done)
+            if agent.replay_buffer.enought_samples():
+                q_loss, policy_loss, alpha_loss = agent.learn()
+                total_q_loss += q_loss
+                total_policy_loss += policy_loss
+                total_alpha_loss += alpha_loss
             total_reward += reward
-            agent.memory.push((obs, action, reward, next_obs, done))
-            
-            obs = next_obs
-            
-            if len(agent.memory) > config['batch_size']:
-                agent.update()
-            
-        
-        writer.add_scalar("Reward/episode", total_reward, episode)
-        print(f"Episode {episode + 1}: Total Reward: {total_reward}")
-        
-        if total_reward > best_reward:
-            print('\n----------------------')
-            print('New best episode: {}'.format(total_reward))
-            torch.save(agent.actor.actor_net, 'agent_actor.pth')
-            torch.save(agent.critic.critic_net, 'agent_critic.pth') 
-            torch.save(agent.entropy.log_alpha, 'agent_entropy.pth') 
-            print('----------------------\n')
-            best_reward = total_reward
+            state = next_state
+            if done:
+                break
+        if ep % save_ep == 0:
+            torch.save(agent.actor.state_dict(), f'checkpoints/109062102_hw3_data_{ep}_{config}')
+        if ep % draw_ep == 0:
+            state = env.reset()
+            done = False
+            eval_reward = 0
+            while not done:
+                state = agent.preprocess_obs(state)
+                action = agent.act(state, eval=True)
+                state, reward, done, _ = env.step(action)
+                eval_reward += reward
+            if eval_reward > highest_reward:
+                highest_reward = eval_reward
+                torch.save(agent.actor.state_dict(), f"109062102_hw3_data_highest_{config}")
+            writer.add_scalar("Reward/eval reward", eval_reward, ep)
+        writer.add_scalar("Reward/train reward", total_reward, ep)
+        writer.add_scalar("Loss/q_loss", total_q_loss/step, ep)
+        writer.add_scalar("Loss/policy_loss", total_policy_loss/step, ep)
+        pbar.set_postfix({'total_reward': total_reward, "q_loss": total_q_loss/step, "policy_loss": total_policy_loss/step, "alpha_loss": total_alpha_loss/step, "num_step": step})
 
-        if episode % 100 == 0 and episode > 0:
-            torch.save(agent.actor.actor_net, 'agent_{}.pth'.format(episode))
-
-
-if __name__ == "__main__":
-    main()
+    torch.save(agent.actor.state_dict(), "109062102_hw3_data")

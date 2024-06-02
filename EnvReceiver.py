@@ -1,5 +1,6 @@
 import socket
 import pickle
+from gym import spaces
 
 class EnvReceiver:
     def __init__(self):
