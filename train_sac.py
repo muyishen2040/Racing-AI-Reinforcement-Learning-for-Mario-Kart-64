@@ -171,6 +171,7 @@ def main():
     
     env = FrameStack(orig_env, config['stack_frame'])
     reward_buffer = deque([], maxlen=90)
+    # reward_buffer = deque([], maxlen=180)
     
     agent = SAC(config)
     
@@ -221,8 +222,8 @@ def main():
                 # print(agent.actor.actor_net.forward_bias)
             
             # For the first training stage, uncomment the following code snippet to enable early stop
-            # if step_in_episode > 90 and sum(reward_buffer) / len(reward_buffer) <= -0.099:
-            #     break
+            if step_in_episode > 90 and sum(reward_buffer) / len(reward_buffer) <= -0.099:
+                break
             
         
         writer.add_scalar("Reward/episode", total_reward, episode)
@@ -237,8 +238,10 @@ def main():
             print('----------------------\n')
             best_reward = total_reward
 
-        if episode % 100 == 0 and episode > 0:
-            torch.save(agent.actor.actor_net, 'agent_{}.pth'.format(episode))
+        if episode % 50 == 0 and episode > 0:
+            torch.save(agent.actor.actor_net, 'actor_{}.pth'.format(episode))
+            torch.save(agent.critic.critic_net, 'critic_{}.pth'.format(episode))
+            torch.save(agent.entropy.log_alpha, 'entropy_{}.pth'.format(episode))
 
 
 if __name__ == "__main__":

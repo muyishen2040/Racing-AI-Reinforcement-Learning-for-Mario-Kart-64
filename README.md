@@ -22,10 +22,16 @@ The easiest, cleanest, most consistent way to get up and running with this proje
 
 0. Clone the repository and get into the root folder of the project.
 
-1. Run the docker compose of the game environment using:
+1. Build the docker image with the following command:
+
+    ```
+    docker build -t bz/gym-mupen64plus:0.0.1 .
+    ```
+
+2. Please be noticed that in order to enable multiple instances of the environment, the original docker-compose file is separated into two parts - base file (docker-compose.yml) and override files (e.g. instance1.yml). The following command gives an example of instantiating an environment:
 
     ```bash
-    docker-compose up --build -d
+    docker-compose -p agent1 -f docker-compose.yml -f instance1.yml up --build -d
     ```
 
     This will start the following 4 containers:
@@ -34,7 +40,12 @@ The easiest, cleanest, most consistent way to get up and running with this proje
     - `agent` runs the example python script
     - `emulator` runs the mupen64plus emulator
 
-2. Under the root of the repository, there is a Python 3 file `SocketWrapper.py`. This file contains the wrapper for our RL training. We can first create a virtual environment for our project by:
+    Note:
+    - `-p` flag is the name of this environment instance
+    - Before creating a new instance, be sure to create a override file to modify the port numbers (see `instance1.yml` for more details).
+    - Make sure that the `docker-compose down` command given below also matches the file name of your instance and file names.
+
+3. Under the root of the repository, there is a Python 3 file `SocketWrapper.py`. This file contains the wrapper for our RL training. We can first create a virtual environment for our project by:
 
     ```bash
     python -m venv RL_env
@@ -56,27 +67,30 @@ The easiest, cleanest, most consistent way to get up and running with this proje
     env = SocketWrapper()
     ```
 
-3. Then you can use your favorite VNC client (e.g., [VNC Viewer](https://www.realvnc.com/en/connect/download/viewer/)) to connect to `localhost` to watch the XVFB display in real-time. Note that running the VNC server and client can cause some performance overhead.
+4. Then you can use your favorite VNC client (e.g., [VNC Viewer](https://www.realvnc.com/en/connect/download/viewer/)) to connect to `localhost` to watch the XVFB display in real-time. Note that running the VNC server and client can cause some performance overhead.
 
     For VSCode & TightVNC Users:
     - Forward the port 5900 to the desired port on the local host.
     - Open TightVNC and connect to `localhost::desired_port_num`, e.g. `localhost::5901`.
 
-4. To turn off the docker compose container, use the following command:
+5. To turn off the docker compose container (e.g. suppose we follow the naming criteria above `agent1` as the instance name and use `instance1.yml` for the override file), use the following command:
 
     ```bash
-    docker-compose down
+    docker-compose -p agent1 -f docker-compose.yml -f instance1.yml down
     ```
+
+    Note:
+    - To create another instance, you can create another tmux channel to run another with a different instance name and override file.
 
 **Additional Notes:**
 
-1. To view the status (output log) of a single compose, you can use the following command:
+1. To view the status (output log) of a single compose, you can use the following command (suppose our instance name is `agent1`):
 
     ```bash
-    docker-compose logs xvfbsrv
-    docker-compose logs vncsrv
-    docker-compose logs emulator
-    docker-compose logs agent
+    docker-compose -p agent1 logs xvfbsrv
+    docker-compose -p agent1 logs vncsrv
+    docker-compose -p agent1 logs emulator
+    docker-compose -p agent1 logs agent
     ```
 
 ## Features
