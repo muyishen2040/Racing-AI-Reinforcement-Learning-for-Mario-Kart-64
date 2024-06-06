@@ -89,6 +89,8 @@ port = 12345
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 env = gym.make('Mario-Kart-Luigi-Raceway-v0')
+# env = gym.make('Mario-Kart-Rainbow-Road-v0')
+
 # ----------------------------------------------
 # skip_frame = 4
 # env = SkipWrapper(env, skip=skip_frame)

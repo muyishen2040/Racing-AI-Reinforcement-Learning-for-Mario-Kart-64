@@ -45,7 +45,7 @@ class FrameStack():
 
 class Agent():
     def __init__(self):
-        self.actor_net = torch.load('checkpoint/agent_actor.pth')
+        self.actor_net = torch.load('checkpoint/agent_actor_third.pth')
 
     def choose_action(self, state):
         mean, std, binary_logits = self.actor_net(state)
