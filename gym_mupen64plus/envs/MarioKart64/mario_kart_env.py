@@ -128,16 +128,13 @@ class MarioKartEnv(Mupen64PlusEnv):
 
             #cprint(str(self.step_count) + ': CHECKPOINT achieved!', 'green')
             for i in range(self.last_known_ckpt + 1, cur_ckpt):
-                if (not self._checkpoint_tracker[i]):
-                    self._checkpoint_tracker[i] = True
-                    reward_to_return += self.CHECKPOINT_REWARD
+                reward_to_return += self.CHECKPOINT_REWARD
 
         elif (self.ENABLE_CHECKPOINTS and cur_ckpt < self.last_known_ckpt):
             
             #cprint(str(self.step_count) + ': BACKWARDS!!', 'red')
             for i in range(cur_ckpt, self.last_known_ckpt + 1):
-                if (self._checkpoint_tracker[i]):
-                    reward_to_return += self.BACKWARDS_PUNISHMENT
+                reward_to_return += self.BACKWARDS_PUNISHMENT
 
         if self.ENABLE_CHECKPOINTS:
             self.last_known_ckpt = cur_ckpt
