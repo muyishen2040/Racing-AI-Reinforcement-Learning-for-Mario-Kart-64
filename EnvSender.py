@@ -44,7 +44,7 @@ host = '172.17.0.1'
 port = 12345
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-env = gym.make('Mario-Kart-Luigi-Raceway-v0')
+env = gym.make('Mario-Kart-Luigi-Raceway-v0').env
 
 while True:
     if is_socket_closed(sock):

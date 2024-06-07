@@ -39,5 +39,5 @@ class ReplayBuffer:
         done = self.mem_done[choices]
         return state, action_c, action_d, reward, next_state, done
     
-    def enought_samples(self):
+    def enough_samples(self):
         return self.mem_counter >= self.config.batch_size or self.mem_full

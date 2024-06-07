@@ -20,7 +20,7 @@ if __name__ == '__main__':
         lr=1e-7,
         entropy_lr=1e-3,
         gamma=0.999,
-        tau=0.001,
+        tau=0.00001,
         memory_size=100000,
         batch_size=256,
         device='cuda'
@@ -33,8 +33,8 @@ if __name__ == '__main__':
     save_ep = 100
     draw_ep = 10
     highest_reward = -9999
-    pbar = tqdm(range(num_episodes))
-
+    pbar = tqdm(range(1, num_episodes+1))
+    reward_buffer = deque(maxlen=90)
     for ep in pbar:
         state = env.reset()
         state = agent.preprocess_obs(state)
@@ -43,13 +43,16 @@ if __name__ == '__main__':
         total_q_loss = 0
         total_policy_loss = 0
         total_alpha_loss = 0
+        reward_buffer.clear()
         while True:
             step += 1
             action = agent.act(state, random=False)
             next_state, reward, done, info = env.step(action)
+            print(reward, "                 ", end="\r")
+            reward_buffer.append(reward)
             next_state = agent.preprocess_obs(next_state)
             agent.replay_buffer.store_transition(state, action[0], ACTIONS2IDX[tuple(action[2:])], reward, next_state, done)
-            if agent.replay_buffer.enought_samples():
+            if agent.replay_buffer.enough_samples():
                 q_loss, policy_loss, alpha_loss = agent.learn()
                 total_q_loss += q_loss
                 total_policy_loss += policy_loss
@@ -58,17 +61,23 @@ if __name__ == '__main__':
             state = next_state
             if done:
                 break
+            if step > 90 and sum(reward_buffer) / len(reward_buffer) <= -0.099:
+                break
         if ep % save_ep == 0:
             torch.save(agent.actor.state_dict(), f'checkpoints/109062102_hw3_data_{ep}_{config}')
         if ep % draw_ep == 0:
             state = env.reset()
             done = False
             eval_reward = 0
+            reward_buffer.clear()
             while not done:
                 state = agent.preprocess_obs(state)
                 action = agent.act(state, eval=True)
                 state, reward, done, _ = env.step(action)
+                reward_buffer.append(reward)
                 eval_reward += reward
+                if step > 90 and sum(reward_buffer) / len(reward_buffer) <= -0.099:
+                    break
             if eval_reward > highest_reward:
                 highest_reward = eval_reward
                 torch.save(agent.actor.state_dict(), f"109062102_hw3_data_highest_{config}")
@@ -76,6 +85,6 @@ if __name__ == '__main__':
         writer.add_scalar("Reward/train reward", total_reward, ep)
         writer.add_scalar("Loss/q_loss", total_q_loss/step, ep)
         writer.add_scalar("Loss/policy_loss", total_policy_loss/step, ep)
-        pbar.set_postfix({'total_reward': total_reward, "q_loss": total_q_loss/step, "policy_loss": total_policy_loss/step, "alpha_loss": total_alpha_loss/step, "num_step": step})
+        pbar.set_postfix({'total_reward': total_reward, "q_loss": total_q_loss/step, "policy_loss": total_policy_loss/step, "alpha_loss": total_alpha_loss/step, "alpha": (agent.alpha_c.item(), agent.alpha_d.item()), "num_step": step})
 
     torch.save(agent.actor.state_dict(), "109062102_hw3_data")

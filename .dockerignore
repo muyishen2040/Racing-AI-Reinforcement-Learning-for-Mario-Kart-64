@@ -16,3 +16,5 @@ RL_env/
 *.pkl
 runs/
 checkpoints/
+DRL_final
+*.pth

@@ -65,8 +65,10 @@ class MarioKartEnv(Mupen64PlusEnv):
     def _step(self, action):
         # Interpret the action choice and get the actual controller state for this step
         controls = action + [  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0]
-
-        return super(MarioKartEnv, self)._step(controls)
+        obs, reward, done, info = super(MarioKartEnv, self)._step(controls)
+        info["lap"] = self._get_lap()
+        info["checkpoint"] = self._get_current_checkpoint()
+        return obs, reward, done, info
 
     def _reset_after_race(self):
         self._wait(count=275, wait_for='times screen')
@@ -89,11 +91,10 @@ class MarioKartEnv(Mupen64PlusEnv):
         
         self.lap = 1
         self.step_count_at_lap = 0
-        self.last_known_lap = -1
 
-        self.CHECKPOINT_LOCATIONS = list(self._generate_checkpoints(64, 36, 584, 444)) 
+        self.CHECKPOINT_LOCATIONS = list(self._generate_checkpoints(64, 36, 584, 450)) 
         if self.ENABLE_CHECKPOINTS:
-            self._checkpoint_tracker = [[False for i in range(len(self.CHECKPOINT_LOCATIONS))] for j in range(3)]
+            self._checkpoint_tracker = [False for i in range(len(self.CHECKPOINT_LOCATIONS)*3)]
             self.last_known_ckpt = -1
         
         # Nothing to do on the first call to reset()
@@ -111,53 +112,41 @@ class MarioKartEnv(Mupen64PlusEnv):
     def _get_reward(self):
         #cprint('Get Reward called!','yellow')
 
-        reward_to_return = 0
+        reward_to_return = self.DEFAULT_STEP_REWARD
         cur_lap = self._get_lap()
 
         if self.ENABLE_CHECKPOINTS:
             cur_ckpt = self._get_current_checkpoint()
+            cur_ckpt += (cur_lap - 1) * len(self.CHECKPOINT_LOCATIONS)
 
-        if self.episode_over:
-            # Scale out the end reward based on the total steps to get here; the fewer steps, the higher the reward
-            reward_to_return = 5 * (1250 - self.step_count) + self.END_REWARD #self.END_REWARD * (5000 / self.step_count) - 3000
-        else:
-            if cur_lap > self.lap:
-                self.lap = cur_lap
-                cprint('Lap %s!' % self.lap, 'green')
+        if cur_lap > self.lap:
+            self.lap = cur_lap
+            cprint('Lap %s!' % self.lap, 'green')
+            self.step_count_at_lap = self.step_count
 
-                # Scale out the lap reward based on the steps to get here; the fewer steps, the higher the reward
-                steps_this_lap = self.step_count - self.step_count_at_lap
-                reward_to_return = self.LAP_REWARD # TODO: Figure out a good scale here... number of steps required per lap will vary depending on the course; don't want negative reward for completing a lap
-                self.step_count_at_lap = self.step_count
+        if (self.ENABLE_CHECKPOINTS and cur_ckpt > self.last_known_ckpt):
 
-            elif (self.ENABLE_CHECKPOINTS and cur_ckpt > -1 and
-                  not self._checkpoint_tracker[self.last_known_lap - 1][cur_ckpt]):
+            #cprint(str(self.step_count) + ': CHECKPOINT achieved!', 'green')
+            for i in range(self.last_known_ckpt + 1, cur_ckpt):
+                reward_to_return += self.CHECKPOINT_REWARD
 
-                # TODO: Backwards across a lap boundary incorrectly grants a checkpoint reward
-                #       Need to investigate further. Might need to restore check for sequential checkpoints
-
-                #cprint(str(self.step_count) + ': CHECKPOINT achieved!', 'green')
-                self._checkpoint_tracker[self.lap - 1][cur_ckpt] = True
-                reward_to_return = self.CHECKPOINT_REWARD # TODO: This should reward per progress made. It seems as though currently, by going too fast, you could end up skipping over some progress rewards, which would encourage driving around a bit to achieve those rewards. Should reward whatever progress was achieved during the step (perhaps multiple 'checkpoints')
-
-            elif (self.ENABLE_CHECKPOINTS and ( cur_lap < self.last_known_lap or
-                                               cur_ckpt < self.last_known_ckpt)):
-                
-                #cprint(str(self.step_count) + ': BACKWARDS!!', 'red')
-                self._checkpoint_tracker[self.lap - 1][self.last_known_ckpt] = False
-                reward_to_return = self.BACKWARDS_PUNISHMENT
-
-            else:
-                reward_to_return = self.DEFAULT_STEP_REWARD
+        elif (self.ENABLE_CHECKPOINTS and cur_ckpt < self.last_known_ckpt):
+            
+            #cprint(str(self.step_count) + ': BACKWARDS!!', 'red')
+            for i in range(cur_ckpt, self.last_known_ckpt + 1):
+                reward_to_return += self.BACKWARDS_PUNISHMENT
 
         if self.ENABLE_CHECKPOINTS:
             self.last_known_ckpt = cur_ckpt
-        self.last_known_lap = cur_lap
+        if self.episode_over:
+            reward_to_return = self.DEFAULT_STEP_REWARD
         return reward_to_return
 
     def _get_lap(self):
         # The first checkpoint is the upper left corner. It's value should tell us the lap.
         ckpt_val = self._evaluate_checkpoint(self.CHECKPOINT_LOCATIONS[0])
+        if ckpt_val == -1:
+            ckpt_val = self._evaluate_checkpoint(self.CHECKPOINT_LOCATIONS[-30])
 
         # If it is unknown, assume same lap (character icon is likely covering the corner)
         return ckpt_val if ckpt_val != -1 else self.lap
