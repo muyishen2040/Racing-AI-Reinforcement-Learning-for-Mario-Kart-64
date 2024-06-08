@@ -337,7 +337,7 @@ class Actor:
         self.min_action = min_action.to(device)
         self.max_action = max_action.to(device)
         self.actor_net = ActorNet(self.max_action).to(device)
-        # self.actor_net = torch.load('checkpoint2/agent_actor.pth')
+        # self.actor_net = torch.load('checkpoints/BC/actor_150.pth')
         # self.actor_net.forward_bias = nn.Parameter(torch.tensor(0.0))
         self.optimizer = torch.optim.Adam(self.actor_net.parameters(), lr=self.actor_lr)
 
@@ -389,8 +389,8 @@ class Critic:
         self.device = device
         self.critic_net = CriticNet().to(device)
         self.target_net = CriticNet().to(device)
-        # self.critic_net = torch.load('checkpoint2/agent_critic.pth')
-        # self.target_net = torch.load('checkpoint2/agent_critic.pth')
+        # self.critic_net = torch.load('checkpoints/BC/critic_150.pth')
+        # self.target_net = torch.load('checkpoints/BC/critic_150.pth')
         self.optimizer = torch.optim.Adam(self.critic_net.parameters(), lr=critic_lr, eps=1e-5)
         self.loss_func = nn.MSELoss()
 
@@ -409,6 +409,7 @@ class Critic:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        return loss.item()
 
 
 class Entropy:
@@ -416,7 +417,7 @@ class Entropy:
         self.entropy_lr = entropy_lr
         self.target_entropy = -action_dim
         self.log_alpha = torch.zeros(1, requires_grad=True, device=device)
-        # self.log_alpha = torch.load('checkpoint2/agent_entropy.pth')
+        # self.log_alpha = torch.load('checkpoint/agent_entropy.pth')
         self.alpha = self.log_alpha.exp()
         self.optimizer = torch.optim.Adam([self.log_alpha], lr=entropy_lr)
 
