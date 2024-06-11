@@ -57,7 +57,7 @@ class SAC:
         
         self.actor = Actor(config['device'], config['actor_lr'], config['min_action'], config['max_action'])
         self.critic = Critic(config['device'], config['critic_lr'], config['tau'])
-        self.entropy = Entropy(config['device'], config['entropy_lr'], config['action_dim'])
+        self.entropy = Entropy(config['device'], config['entropy_lr'], 2)
 
     def update(self):
         states, actions, rewards, next_states, dones = self.memory.sample(self.config['batch_size'])
@@ -69,7 +69,7 @@ class SAC:
 
         actions = actions.squeeze()
         current_q1, current_q2 = self.critic.get_q_value(states, actions)
-        self.critic.learn(current_q1, current_q2, target_q.detach())
+        q_loss = self.critic.learn(current_q1, current_q2, target_q.detach())
 
         a_, log_prob, _, _, _ = self.actor.evaluate(states)
         q1, q2 = self.critic.get_q_value(states, a_)
@@ -82,6 +82,8 @@ class SAC:
         self.entropy.alpha = self.entropy.log_alpha.exp()
 
         self.critic.update()
+
+        return actor_loss.item(), q_loss, alpha_loss.item()
         
 
 class FrameSkip():
@@ -147,14 +149,14 @@ def main():
         'memory_len': 1000000,
         
         # Learning rates for the first stage training
-        # 'entropy_lr': 1e-4,
-        # 'actor_lr': 3e-4,
-        # 'critic_lr': 3e-4,
+        'entropy_lr': 1e-4,
+        'actor_lr': 3e-4,
+        'critic_lr': 3e-4,
         
         # Learning rates for the second stage training
-        'entropy_lr': 1e-5,
-        'actor_lr': 3e-5,
-        'critic_lr': 3e-5,
+        # 'entropy_lr': 1e-5,
+        # 'actor_lr': 3e-5,
+        # 'critic_lr': 3e-5,
         'batch_size': 256,
         'episodes': 10000,
         'skip_frame': 4,
@@ -180,6 +182,9 @@ def main():
     
     for episode in range(config['episodes']):
         total_reward = 0
+        total_q_loss = 0
+        total_policy_loss = 0
+        total_alpha_loss = 0
         done = False
         obs = env.reset()
         reward_buffer.clear()
@@ -209,6 +214,11 @@ def main():
             
             next_obs, reward, done, info = env.step(action.flatten().tolist())
             reward_buffer.append(reward)
+            if step_in_episode > 90 and sum(reward_buffer) / len(reward_buffer) <= -0.099:
+                early_stop_reward = (1250 - step_in_episode) * -0.1
+                reward += early_stop_reward
+                done = True
+            print(reward, "      ", end='\r')
             # print(reward)
             total_reward += reward
             
@@ -218,16 +228,19 @@ def main():
             obs = next_obs
             
             if len(agent.memory) > config['batch_size'] and len(agent.memory) > config['replay_buffer_warmup']:
-                agent.update()
+                policy_loss, q_loss, alpha_loss = agent.update()
+                total_q_loss += q_loss
+                total_policy_loss += policy_loss
+                total_alpha_loss += alpha_loss
                 # print(agent.actor.actor_net.forward_bias)
-            
-            # For the first training stage, uncomment the following code snippet to enable early stop
-            if step_in_episode > 90 and sum(reward_buffer) / len(reward_buffer) <= -0.099:
-                break
             
         
         writer.add_scalar("Reward/episode", total_reward, episode)
-        print(f"Episode {episode + 1}: Total Reward: {total_reward}")
+        writer.add_scalar("Loss/q_loss", total_q_loss/step_in_episode, episode)
+        writer.add_scalar("Loss/policy_loss", total_policy_loss/step_in_episode, episode)
+        writer.add_scalar("Loss/alpha_loss", total_alpha_loss/step_in_episode, episode)
+        writer.add_scalar("Alpha/alpha", agent.entropy.alpha, episode)
+        print(f"Episode {episode + 1}: Total Reward: {total_reward}, q_loss: {total_q_loss/step_in_episode}, policy_loss: {total_policy_loss/step_in_episode}, alpha_loss: {total_alpha_loss/step_in_episode}, alpha: {agent.entropy.alpha.item()}, num_step: {step_in_episode}")
         
         if total_reward > best_reward:
             print('\n----------------------')

@@ -15,7 +15,7 @@ The easiest, cleanest, most consistent way to get up and running with this proje
 ### Running with docker-compose
 
 **Pre-requisites:**
-- Docker & docker-compose
+- Docker & docker-compose (if you are using Compose plugin for docker, replace `docker-compose` with `docker compose` in the commands below).
 - Ensure you have a copy of the ROMs you wish to use, and make sure it is placed inside the path under `gym_mupen64plus/ROMs`.
 
 **Steps:**
@@ -70,7 +70,7 @@ The easiest, cleanest, most consistent way to get up and running with this proje
 4. Then you can use your favorite VNC client (e.g., [VNC Viewer](https://www.realvnc.com/en/connect/download/viewer/)) to connect to `localhost` to watch the XVFB display in real-time. Note that running the VNC server and client can cause some performance overhead.
 
     For VSCode & TightVNC Users:
-    - Forward the port 5900 to the desired port on the local host.
+    - Forward the port 5901/5902 to the desired port on the local host.
     - Open TightVNC and connect to `localhost::desired_port_num`, e.g. `localhost::5901`.
 
 5. To turn off the docker compose container (e.g. suppose we follow the naming criteria above `agent1` as the instance name and use `instance1.yml` for the override file), use the following command:
@@ -95,7 +95,7 @@ The easiest, cleanest, most consistent way to get up and running with this proje
 
 ## Features
 
-- **SAC Training Script**: A script to train a Soft Actor-Critic (SAC) agent.
+- **SAC and BC Training Script**: A script to train a Soft Actor-Critic (SAC) and Behavior Cloning (BC) agent.
 - **Grad-CAM Visualization**: Tools to visualize the learned features using Grad-CAM.
 
 This repository enhances the Mario Kart 64 Gym Environment with modern reinforcement learning capabilities. Follow the setup instructions to get started with training and visualizing your own AI agents in Mario Kart 64.

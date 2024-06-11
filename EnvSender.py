@@ -88,7 +88,7 @@ host = '172.17.0.1'
 port = 12345
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-env = gym.make('Mario-Kart-Luigi-Raceway-v0')
+env = gym.make('Mario-Kart-Luigi-Raceway-v0').env
 # env = gym.make('Mario-Kart-Rainbow-Road-v0')
 
 # ----------------------------------------------
