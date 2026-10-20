@@ -5,9 +5,9 @@ It uses a two-service Docker Compose layout: `simulator` (Mupen64Plus,
 Xvfb, read-only VNC and Gymnasium RPC) and `trainer` (a Python 3 client
 and environment smoke test). The original files on `master` remain intact.
 
-> **Status:** source migrated and smoke-test tooling included; native
-> Mupen64Plus plugin and the end-to-end container launch have **not yet
-> been verified** in an environment with Docker and a lawfully obtained ROM.
+> **Status:** Python tests pass, and the image publishing workflow is included.
+> Native Mupen64Plus, actual game frames, control response, and VNC still
+> require a Docker host and an authorized ROM for end-to-end validation.
 
 ## Running locally or on a Linux VM
 
@@ -23,9 +23,11 @@ docker compose -f compose.python3.yaml --profile smoke run --rm trainer
 docker compose -f compose.python3.yaml logs --tail=100 simulator
 ```
 
-A successful smoke run creates `outputs/reset.png` and
-`outputs/last_step.png` after reset and 30 control actions. Those artifacts
-are more reliable than a simple port-open check of emulator success.
+A successful smoke run creates `outputs/reset.png`, `accelerate.png`,
+`left.png`, `right.png`, `second_reset.png`, `reconnect_reset.png`, and
+`smoke_summary.json`. The script checks frame shape, nonblank and changing
+images, finite rewards, repeated reset, and reconnect. Inspect the PNGs
+yourself: changing pixels alone cannot prove that the kart is driving.
 For headless visualization, run a VNC client on your own computer
 against `localhost:5901`. On an Azure Linux VM, use an SSH tunnel:
 
@@ -52,13 +54,17 @@ env.close()
 
 ```bash
 python -m pip install pytest numpy
-PYTHONPATH=simulator python -m pytest tests/test_protocol.py -q
+PYTHONPATH=simulator python -m pytest tests/test_protocol.py tests/test_controller.py -q
 ```
 
 ### Known limitations
 
 - This branch is **not** a demonstrated emulator-compatible build. The original
   input bot plugin may require adjustments for Ubuntu 22.04 package APIs.
+- The environment starts a fresh emulator after its controller server is ready.
+  It stops the emulator on client disconnect and restarts it on reconnect or
+  track change. A missing plugin poll now times out with a pointer to
+  `/tmp/emulator.log` instead of hanging indefinitely.
 - Mario Kart menu navigation, HUD pixel colors, reward values, and frame timing
   must be regression-tested on the actual game. The simulator relies on the
   Glide64 graphics plugin for HUD colors.
@@ -68,6 +74,62 @@ PYTHONPATH=simulator python -m pytest tests/test_protocol.py -q
 - This server supports one client and one emulator. It is not suitable for
   untrusted networks.
 - The old Compose file and Dockerfile are retained for comparison.
+
+### Published images and Azure VM
+
+Feature-branch pushes build both images in GitHub Actions and push immutable
+`sha-<full commit SHA>` tags to `ghcr.io/muyishen2040/mk64-simulator` and
+`ghcr.io/muyishen2040/mk64-trainer`. Pull requests build without publishing.
+The Docker build context excludes both the legacy tracked ROM directory and
+the private `roms/` directory. Do not add ROM files to the build context.
+
+The GHCR packages are private when first created. The VM must authenticate
+with a GitHub token that has only `read:packages`, or the package owner can
+make these ROM-free images public so `docker pull` needs no token. Never put
+the token in Compose, source control, or a chat message.
+
+On the VM, use `compose.azure.yaml` to pull the CI-built images without a
+local build:
+
+```bash
+mkdir -p ~/mariokart64/roms ~/mariokart64/outputs
+cd ~/mariokart64
+# Copy compose.azure.yaml here, then transfer your authorized ROM to roms/marioKart.n64.
+export MK64_IMAGE_SHA=<full-feature-branch-commit-sha>
+docker compose -f compose.azure.yaml --profile smoke config -q
+docker compose -f compose.azure.yaml pull
+docker compose -f compose.azure.yaml up -d --no-build simulator
+docker compose -f compose.azure.yaml --profile smoke run --rm --no-build trainer
+docker compose -f compose.azure.yaml logs --tail=200 simulator
+docker stats --no-stream
+free -h
+```
+
+To observe active gameplay through VNC, establish the SSH tunnel described
+above and start a longer driver session in a second terminal:
+
+```bash
+docker compose -f compose.azure.yaml --profile smoke run --rm --no-build \
+  trainer python /app/trainer/smoke_test.py --watch-seconds 120
+```
+
+The display is blank until the client calls `reset()`. The emulator advances
+while a client sends actions and stops when that client disconnects.
+
+If the smoke test fails, read `/tmp/emulator.log`, `/tmp/xvfb.log`, and
+`/tmp/vnc.log` inside the simulator container. An RPC health check means only
+that the server is listening; it does not show that the game booted.
+
+Install Docker Engine and Compose v2 on Ubuntu using the
+[official Docker instructions](https://docs.docker.com/engine/install/ubuntu/).
+Verify the selected Azure subscription, SKU and quota, free usage, disk, and
+public IP price in that account before creating resources. Microsoft currently
+lists B2ats v2 as an x86-64 2 vCPU, 1 GiB VM included in the Azure free
+account's limited 12-month offer, but the offer and regional capacity depend
+on the subscription. A Standard public IPv4 address can be charged separately,
+as can the disk after any applicable free allowance. Deallocating a VM stops
+compute billing, but attached storage and public IP resources can keep costing
+money. Use a budget alert and get approval for any nontrivial projected charge.
 
 ### Azure free tier considerations
 
