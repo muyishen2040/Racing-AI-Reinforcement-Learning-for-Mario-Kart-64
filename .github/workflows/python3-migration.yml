@@ -39,3 +39,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose -f compose.python3.yaml --profile smoke config -q
+
+  docker-build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build simulator without ROM
+        run: docker build --progress=plain -f simulator/Dockerfile -t mariokart64-simulator:ci .
+      - name: Build trainer
+        run: docker build --progress=plain -f trainer/Dockerfile -t mariokart64-trainer:ci .
