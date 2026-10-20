@@ -50,7 +50,10 @@ def decode_observation(payload):
     shape = tuple(int(v) for v in payload["shape"])
     if len(shape) != 3 or shape[2] != 3 or not all(0 < s <= 4096 for s in shape):
         raise ValueError("Invalid observation shape")
-    raw = zlib.decompress(base64.b64decode(payload["image"]), max_length=int(np.prod(shape)) + 1) if False else zlib.decompress(base64.b64decode(payload["image"]))
+    decompressor = zlib.decompressobj()
+    raw = decompressor.decompress(base64.b64decode(payload["image"]), int(np.prod(shape)) + 1)
+    if not decompressor.eof or decompressor.unconsumed_tail:
+        raise ValueError("Invalid or oversized compressed image")
     if len(raw) != int(np.prod(shape)):
         raise ValueError("Invalid image payload")
     return np.frombuffer(raw, dtype=np.uint8).reshape(shape).copy()

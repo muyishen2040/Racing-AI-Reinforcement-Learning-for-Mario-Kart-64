@@ -18,3 +18,7 @@ runs/
 *.pth
 *.pt
 *.pkl
+# New two-container images must never include raw game assets
+roms/
+gym_mupen64plus/ROMs/
+outputs/

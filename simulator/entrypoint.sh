@@ -21,9 +21,9 @@ for i in $(seq 1 30); do
   sleep 0.25
 done
 DISPLAY=:99 xdpyinfo >/dev/null
-# VNC listens on localhost within the container; remote access is via SSH forwarding
+# VNC listens inside the container; Docker only publishes it to the host loopback
 # to Docker's host-loopback published port, never directly over the public internet.
-x11vnc -display :99 -forever -shared -viewonly -localhost -nopw -rfbport 5900 -quiet >/tmp/vnc.log 2>&1 &
+x11vnc -display :99 -forever -shared -viewonly -nopw -rfbport 5900 -quiet >/tmp/vnc.log 2>&1 &
 VNC_PID=$!
 
 # The input bot is configured to request commands from the Gymnasium controller HTTP server.
