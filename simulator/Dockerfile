@@ -6,7 +6,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     MARIOKART_MANAGED_DISPLAY=1 \
     MARIOKART_ROM_PATH=/app/roms/marioKart.n64 \
     LIBGL_ALWAYS_SOFTWARE=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    PATH=/usr/games:${PATH}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-dev git gcc make pkg-config \
@@ -14,6 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mupen64plus-video-glide64 mupen64plus-audio-sdl mupen64plus-rsp-hle \
     xvfb x11vnc x11-utils libgl1-mesa-dri ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Ubuntu installs mupen64plus-ui-console under /usr/games.
+RUN command -v mupen64plus
 
 # Build the original controller plugin against the system Mupen64Plus API.
 # Its runtime compatibility with the packaged emulator still requires testing.
