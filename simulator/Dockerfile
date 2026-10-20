@@ -29,6 +29,8 @@ RUN python3 -m pip install --no-cache-dir \
 WORKDIR /app
 COPY gym_mupen64plus /app/gym_mupen64plus
 COPY simulator /app/simulator
+# Fail the build if the legacy tracked ROM ever slips past .dockerignore.
+RUN test ! -e /app/gym_mupen64plus/ROMs/marioKart.n64
 COPY simulator/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 EXPOSE 5555 5900
