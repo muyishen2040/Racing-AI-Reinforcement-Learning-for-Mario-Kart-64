@@ -4,7 +4,7 @@ import itertools
 import os
 import yaml
 from termcolor import cprint
-from gym import spaces
+from gymnasium import spaces
 from gym_mupen64plus.envs.mupen64plus_env \
   import Mupen64PlusEnv, ControllerState, IMAGE_HELPER
 import numpy as np
@@ -47,11 +47,11 @@ class MarioKartEnv(Mupen64PlusEnv):
 
         self.end_race_pixel_color = self.END_RACE_PIXEL_COLORS[self.config["GFX_PLUGIN"]]
         
-        self.action_space = spaces.MultiDiscrete([[-80, 80],  # Joystick X-axis
-                                                  [-80, 80],  # Joystick Y-axis
-                                                  [  0,  1],  # A Button
-                                                  [  0,  1],  # B Button
-                                                  [  0,  1]]) # RB Button
+        self.action_space = spaces.Box(
+            low=np.array([-80, -80, 0, 0, 0], dtype=np.float32),
+            high=np.array([80, 80, 1, 1, 1], dtype=np.float32),
+            dtype=np.float32,
+        )
 
     def _load_config(self):
         self.config.update(yaml.safe_load(open(os.path.join(os.path.dirname(inspect.stack()[0][1]), "mario_kart_config.yml"))))
@@ -64,7 +64,7 @@ class MarioKartEnv(Mupen64PlusEnv):
 
     def _step(self, action):
         # Interpret the action choice and get the actual controller state for this step
-        controls = action + [  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0]
+        controls = list(action) + [0] * 11
         obs, reward, done, info = super(MarioKartEnv, self)._step(controls)
         info["lap"] = self._get_lap()
         info["checkpoint"] = self._get_current_checkpoint()

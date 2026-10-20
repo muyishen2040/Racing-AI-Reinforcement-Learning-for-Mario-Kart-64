@@ -22,9 +22,8 @@ import time
 from termcolor import cprint
 import yaml
 
-import gym
-from gym import error, spaces, utils
-from gym.utils import seeding
+import gymnasium as gym
+from gymnasium import spaces
 
 import numpy as np
 
@@ -58,7 +57,7 @@ IMAGE_HELPER = ImageHelper()
 ###############################################
 class Mupen64PlusEnv(gym.Env):
     __metaclass__ = abc.ABCMeta
-    metadata = {'render.modes': ['human']}
+    metadata = {'render_modes': ['rgb_array'], 'render_fps': 12}
 
     def __init__(self):
         self.viewer = None
@@ -68,6 +67,10 @@ class Mupen64PlusEnv(gym.Env):
         self.episode_over = False
         self.pixel_array = None
         self._base_load_config()
+        if os.getenv('MARIOKART_MANAGED_DISPLAY') == '1':
+            self.config['USE_XVFB'] = False
+            self.config['OFFSET_X'] = 0
+            self.config['OFFSET_Y'] = 0
         self._base_validate_config()
         self.frame_skip = self.config['FRAME_SKIP']
         if self.frame_skip < 1:
@@ -81,7 +84,7 @@ class Mupen64PlusEnv(gym.Env):
         # If the EXTERNAL_EMULATOR environment variable is True, we are running the
         # emulator out-of-process (likely via docker/docker-compose). If not, we need
         # to start the emulator in-process here
-        external_emulator = os.environ.has_key("EXTERNAL_EMULATOR") and os.environ["EXTERNAL_EMULATOR"] == 'True'
+        external_emulator = os.environ.get('EXTERNAL_EMULATOR') == 'True'
         if not external_emulator:
             self.xvfb_process, self.emulator_process = \
                 self._start_emulator(rom_name=self.config['ROM_NAME'],
@@ -106,25 +109,13 @@ class Mupen64PlusEnv(gym.Env):
             self._navigate_menu()
 
         self.observation_space = \
-            spaces.Box(low=0, high=255, shape=(SCR_H, SCR_W, SCR_D))
+            spaces.Box(low=0, high=255, shape=(SCR_H, SCR_W, SCR_D), dtype=np.uint8)
 
-        self.action_space = spaces.MultiDiscrete([[-80, 80], # Joystick X-axis
-                                                  [-80, 80], # Joystick Y-axis
-                                                  [  0,  1], # A Button
-                                                  [  0,  1], # B Button
-                                                  [  0,  1], # RB Button
-                                                  [  0,  1], # LB Button
-                                                  [  0,  1], # Z Button
-                                                  [  0,  1], # C Right Button
-                                                  [  0,  1], # C Left Button
-                                                  [  0,  1], # C Down Button
-                                                  [  0,  1], # C Up Button
-                                                  [  0,  1], # D-Pad Right Button
-                                                  [  0,  1], # D-Pad Left Button
-                                                  [  0,  1], # D-Pad Down Button
-                                                  [  0,  1], # D-Pad Up Button
-                                                  [  0,  1], # Start Button
-                                                 ])
+        self.action_space = spaces.Box(
+            low=np.array([-80, -80] + [0] * 14, dtype=np.float32),
+            high=np.array([80, 80] + [1] * 14, dtype=np.float32),
+            dtype=np.float32,
+        )
 
     def _base_load_config(self):
         self.config = yaml.safe_load(open(os.path.join(os.path.dirname(inspect.stack()[0][1]), "config.yml")))
@@ -154,6 +145,20 @@ class Mupen64PlusEnv(gym.Env):
 
         self.step_count += 1
         return obs, reward, self.episode_over, {}
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        return self._reset(), {}
+
+    def step(self, action):
+        observation, reward, done, info = self._step(list(action))
+        return observation, float(reward), bool(done), False, info
+
+    def render(self):
+        return self.pixel_array
+
+    def close(self):
+        self._close()
 
     def _act(self, action, count=1):
         for _ in itertools.repeat(None, count):
@@ -211,26 +216,19 @@ class Mupen64PlusEnv(gym.Env):
         self.step_count = 0
         return self._observe()
 
-    def _render(self, mode='human', close=False):
+    def _render(self, mode='rgb_array', close=False):
+        # Compatibility for callers of the legacy internal method.
         if close:
-            if hasattr(self, 'viewer') and self.viewer is not None:
-                self.viewer.close()
-                self.viewer = None
-            return
-        img = self.pixel_array
-        if mode == 'rgb_array':
-            return img
-        elif mode == 'human':
-            if not hasattr(self, 'viewer') or self.viewer is None:
-                from gym.envs.classic_control import rendering
-                self.viewer = rendering.SimpleImageViewer()
-            self.viewer.imshow(img)
+            return None
+        if mode != 'rgb_array':
+            raise ValueError('Use the VNC display for human rendering')
+        return self.pixel_array
 
     def _close(self):
         cprint('Close called!', 'yellow')
         self.running = False
-        self._kill_emulator()
         self._stop_controller_server()
+        self._kill_emulator()
 
     def _start_controller_server(self):
         server = ControllerHTTPServer(server_address  = ('', self.config['PORT_NUMBER']),
