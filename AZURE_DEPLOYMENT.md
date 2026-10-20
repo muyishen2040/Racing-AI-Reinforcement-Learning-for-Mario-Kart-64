@@ -59,17 +59,28 @@ accept the key before copying the deployment files.
 
 ## Install Docker and deploy images
 
-Copy `scripts/install_docker_ubuntu_22_04.sh` to the VM and install Docker
-with the included Ubuntu 22.04 installer:
+From a checkout of this branch on your Windows computer, copy the installer,
+Compose file, and your own authorized ROM over SSH. Set `$romPath` to that
+ROM's local path; it is never placed in the repository:
+
+```powershell
+$vmIp = az vm show --resource-group mk64-simulator-rg --name mk64-simulator-dev -d `
+  --query publicIps --output tsv
+$romPath = '<path-to-your-authorized-ROM>'
+ssh "azureuser@$vmIp" 'mkdir -p ~/mariokart64/scripts ~/mariokart64/roms ~/mariokart64/outputs'
+scp scripts/install_docker_ubuntu_22_04.sh "azureuser@${vmIp}:mariokart64/scripts/install_docker_ubuntu_22_04.sh"
+scp compose.azure.yaml "azureuser@${vmIp}:mariokart64/compose.azure.yaml"
+scp $romPath "azureuser@${vmIp}:mariokart64/roms/marioKart.n64"
+```
+
+Install Docker with the included Ubuntu 22.04 installer on the VM:
 
 ```bash
 bash scripts/install_docker_ubuntu_22_04.sh
 ```
 
-Copy `compose.azure.yaml` into `~/mariokart64` on the VM. Transfer your own
-authorized `marioKart.n64` privately into `~/mariokart64/roms/marioKart.n64`
-using `scp` or another authenticated channel. Set the ROM file mode to 600.
-Do not put the ROM into Git, an image build context, or a registry. Then:
+Set the ROM file mode to 600. Do not put the ROM into Git, an image build
+context, or a registry. Then:
 
 ```bash
 cd ~/mariokart64
@@ -163,4 +174,9 @@ az vm show --resource-group mk64-simulator-rg --name mk64-simulator-dev -d \
 `VM deallocated` stops VM compute usage. The P6 disk and Standard static
 public IPv4 address remain allocated and may continue consuming trial
 credit. Deleting the resource group removes those resources and the private
-ROM on the VM; do that only when the deployment is no longer needed.
+ROM on the VM; do that only when the deployment is no longer needed:
+
+```bash
+az group delete --name mk64-simulator-rg --yes
+az group exists --name mk64-simulator-rg  # must return false
+```
