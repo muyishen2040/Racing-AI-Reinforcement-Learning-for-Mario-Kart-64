@@ -1,5 +1,8 @@
+# ROMs and other proprietary assets must not be publicly committed
+roms/
+gym_mupen64plus/ROMs/*
+!gym_mupen64plus/ROMs/.gitkeep
+outputs/
+__pycache__/
+.pytest_cache/
 *.pyc
-*.egg-info/
-*.pth
-RL_env/
-runs/
