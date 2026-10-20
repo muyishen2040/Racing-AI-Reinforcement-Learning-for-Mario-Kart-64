@@ -1,0 +1,34 @@
+# Pull prebuilt images; never build the emulator on a small VM.
+# Set MK64_IMAGE_SHA to a full commit SHA published by the feature-branch CI.
+services:
+  simulator:
+    image: ghcr.io/muyishen2040/mk64-simulator:sha-${MK64_IMAGE_SHA:?Set MK64_IMAGE_SHA to the published full commit SHA}
+    shm_size: "512m"
+    volumes:
+      - ./roms:/app/roms:ro
+    environment:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      SIMULATOR_PORT: "5555"
+    ports:
+      - "127.0.0.1:5901:5900"
+    expose:
+      - "5555"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('127.0.0.1',5555),timeout=2); s.close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  trainer:
+    image: ghcr.io/muyishen2040/mk64-trainer:sha-${MK64_IMAGE_SHA:?Set MK64_IMAGE_SHA to the published full commit SHA}
+    environment:
+      SIMULATOR_HOST: simulator
+      SIMULATOR_PORT: "5555"
+    depends_on:
+      simulator:
+        condition: service_healthy
+    volumes:
+      - ./outputs:/app/outputs
+    profiles: ["smoke"]

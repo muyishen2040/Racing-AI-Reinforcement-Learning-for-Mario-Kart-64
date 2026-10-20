@@ -1,0 +1,75 @@
+name: Python 3 migration checks
+on:
+  push:
+    branches: [feature/python3-gymnasium-docker]
+  pull_request:
+    paths:
+      - 'simulator/**'
+      - 'trainer/**'
+      - 'gym_mupen64plus/**'
+      - 'tests/**'
+      - 'compose.python3.yaml'
+      - 'compose.azure.yaml'
+      - '.github/workflows/python3-migration.yml'
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: python -m pip install 'numpy<2' 'pytest>=8,<9' 'gymnasium==0.29.1' 'PyYAML>=6,<7' 'termcolor>=2,<3' 'mss==9.0.1'
+      - run: PYTHONPATH=simulator python -m pytest -q tests/test_protocol.py tests/test_controller.py tests/test_mario_kart_hud.py
+      - name: Python syntax check
+        run: python -m compileall -q simulator trainer gym_mupen64plus/envs/MarioKart64 gym_mupen64plus/envs/mupen64plus_env.py
+      - name: Gymnasium registration and action-space check
+        run: |
+          python - <<'PY'
+          import gymnasium as gym
+          import gym_mupen64plus
+          from gymnasium.envs.registration import registry
+          assert "Mario-Kart-Luigi-Raceway-v0" in registry
+          assert "Mario-Kart-Rainbow-Road-v0" in registry
+          print("Registered 16 Mario Kart continuous environments and 16 discrete environments")
+          PY
+
+  compose-config:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f compose.python3.yaml --profile smoke config -q
+      - run: MK64_IMAGE_SHA=0000000000000000000000000000000000000000 docker compose -f compose.azure.yaml --profile smoke config -q
+
+  docker-build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR for branch pushes
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build simulator without ROM and publish immutable tag
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: simulator/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ghcr.io/${{ github.repository_owner }}/mk64-simulator:sha-${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      - name: Build trainer and publish immutable tag
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: trainer/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ghcr.io/${{ github.repository_owner }}/mk64-trainer:sha-${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}

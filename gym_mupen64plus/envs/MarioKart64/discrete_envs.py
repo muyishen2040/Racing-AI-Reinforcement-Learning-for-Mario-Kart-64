@@ -1,6 +1,6 @@
 import abc
 from gym_mupen64plus.envs.MarioKart64.mario_kart_env import MarioKartEnv
-from gym import spaces
+from gymnasium import spaces
 
 class DiscreteActions:
     ACTION_MAP = [

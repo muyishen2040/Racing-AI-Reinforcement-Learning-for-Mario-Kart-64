@@ -4,7 +4,7 @@ import itertools
 import os
 import yaml
 from termcolor import cprint
-from gym import spaces
+from gymnasium import spaces
 from gym_mupen64plus.envs.mupen64plus_env \
   import Mupen64PlusEnv, ControllerState, IMAGE_HELPER
 import numpy as np
@@ -28,6 +28,7 @@ class MarioKartEnv(Mupen64PlusEnv):
     CHECKPOINT_REWARD = 0.5
     BACKWARDS_PUNISHMENT = -1
     END_REWARD = 1000
+    MIN_CHECKPOINT_COLOR_RUN = 8
 
     END_EPISODE_THRESHOLD = 0
 
@@ -47,11 +48,11 @@ class MarioKartEnv(Mupen64PlusEnv):
 
         self.end_race_pixel_color = self.END_RACE_PIXEL_COLORS[self.config["GFX_PLUGIN"]]
         
-        self.action_space = spaces.MultiDiscrete([[-80, 80],  # Joystick X-axis
-                                                  [-80, 80],  # Joystick Y-axis
-                                                  [  0,  1],  # A Button
-                                                  [  0,  1],  # B Button
-                                                  [  0,  1]]) # RB Button
+        self.action_space = spaces.Box(
+            low=np.array([-80, -80, 0, 0, 0], dtype=np.float32),
+            high=np.array([80, 80, 1, 1, 1], dtype=np.float32),
+            dtype=np.float32,
+        )
 
     def _load_config(self):
         self.config.update(yaml.safe_load(open(os.path.join(os.path.dirname(inspect.stack()[0][1]), "mario_kart_config.yml"))))
@@ -64,7 +65,7 @@ class MarioKartEnv(Mupen64PlusEnv):
 
     def _step(self, action):
         # Interpret the action choice and get the actual controller state for this step
-        controls = action + [  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0]
+        controls = list(action) + [0] * 11
         obs, reward, done, info = super(MarioKartEnv, self)._step(controls)
         info["lap"] = self._get_lap()
         info["checkpoint"] = self._get_current_checkpoint()
@@ -80,7 +81,7 @@ class MarioKartEnv(Mupen64PlusEnv):
     def _reset_during_race(self):
         # Can't pause the race until the light turns green
         if (self.step_count * self.controller_server.frame_skip) < 120:
-            steps_to_wait = 100 - (self.step_count * self.controller_server.frame_skip)
+            steps_to_wait = 120 - (self.step_count * self.controller_server.frame_skip)
             self._wait(count=steps_to_wait, wait_for='green light so we can pause')
         self._press_button(ControllerState.START_BUTTON)
         self._press_button(ControllerState.JOYSTICK_DOWN)
@@ -107,6 +108,10 @@ class MarioKartEnv(Mupen64PlusEnv):
                 else:
                     self._reset_during_race()
 
+                # Retry/course change restores the game's default HUD.
+                self._wait(count=120, wait_for='race HUD to appear')
+                self._cycle_hud_view(times=2)
+
         return super(MarioKartEnv, self)._reset()
 
     def _get_reward(self):
@@ -117,39 +122,33 @@ class MarioKartEnv(Mupen64PlusEnv):
 
         if self.ENABLE_CHECKPOINTS:
             cur_ckpt = self._get_current_checkpoint()
-            cur_ckpt += (cur_lap - 1) * len(self.CHECKPOINT_LOCATIONS)
+            if cur_ckpt >= 0:
+                cur_ckpt += (cur_lap - 1) * len(self.CHECKPOINT_LOCATIONS)
 
         if cur_lap > self.lap:
             self.lap = cur_lap
             cprint('Lap %s!' % self.lap, 'green')
             self.step_count_at_lap = self.step_count
 
-        if (self.ENABLE_CHECKPOINTS and cur_ckpt > self.last_known_ckpt):
-
-            #cprint(str(self.step_count) + ': CHECKPOINT achieved!', 'green')
-            for i in range(self.last_known_ckpt + 1, cur_ckpt):
-                reward_to_return += self.CHECKPOINT_REWARD
-
-        elif (self.ENABLE_CHECKPOINTS and cur_ckpt < self.last_known_ckpt):
-            
-            #cprint(str(self.step_count) + ': BACKWARDS!!', 'red')
-            for i in range(cur_ckpt, self.last_known_ckpt + 1):
-                reward_to_return += self.BACKWARDS_PUNISHMENT
-
-        if self.ENABLE_CHECKPOINTS:
+        # A missing or occluded HUD is unknown progress, not backwards driving.
+        if self.ENABLE_CHECKPOINTS and cur_ckpt >= 0:
+            if cur_ckpt > self.last_known_ckpt:
+                reward_to_return += (cur_ckpt - self.last_known_ckpt) * self.CHECKPOINT_REWARD
+            elif cur_ckpt < self.last_known_ckpt:
+                reward_to_return += (self.last_known_ckpt - cur_ckpt) * self.BACKWARDS_PUNISHMENT
             self.last_known_ckpt = cur_ckpt
         if self.episode_over:
             reward_to_return = self.DEFAULT_STEP_REWARD
         return reward_to_return
 
     def _get_lap(self):
-        # The first checkpoint is the upper left corner. It's value should tell us the lap.
-        ckpt_val = self._evaluate_checkpoint(self.CHECKPOINT_LOCATIONS[0])
-        if ckpt_val == -1:
-            ckpt_val = self._evaluate_checkpoint(self.CHECKPOINT_LOCATIONS[-30])
-
-        # If it is unknown, assume same lap (character icon is likely covering the corner)
-        return ckpt_val if ckpt_val != -1 else self.lap
+        # A run of matching HUD pixels is needed to identify the lap color.
+        values = [self._evaluate_checkpoint(points)
+                  for points in self.CHECKPOINT_LOCATIONS[:self.MIN_CHECKPOINT_COLOR_RUN]]
+        if len(values) == self.MIN_CHECKPOINT_COLOR_RUN and values[0] > 0 and \
+                all(value == values[0] for value in values):
+            return values[0]
+        return self.lap
 
     def _generate_checkpoints(self, min_x, min_y, max_x, max_y):
         # TODO: I'm sure this can/should be more pythonic somehow
@@ -187,30 +186,18 @@ class MarioKartEnv(Mupen64PlusEnv):
         checkpoint_values = [self._evaluate_checkpoint(points)
                              for points in self.CHECKPOINT_LOCATIONS]
 
-        # Check if we have achieved any checkpoints
-        if any(val > -1 for val in checkpoint_values):
-            
-            # argmin tells us the first index with the lowest value
-            index_of_lowest_val = np.argmin(checkpoint_values)
-
-            if index_of_lowest_val != 0:
-                # If the argmin is anything but 0, we have achieved
-                # all the checkpoints up through the prior index
-                checkpoint = index_of_lowest_val - 1
-            else:
-                # If the argmin is at index 0, they are all the same value,
-                # which means we've hit all the checkpoints for this lap
-                checkpoint = len(checkpoint_values) - 1
-            
-            #if self.last_known_ckpt != checkpoint:
-            #    cprint('--------------------------------------------','red')
-            #    cprint('Checkpoints: %s' % checkpoint_values, 'yellow')
-            #    cprint('Checkpoint: %s' % checkpoint, 'cyan')
-
-            return checkpoint
-        else:
-            # We haven't hit any checkpoint yet :(
+        # The HUD draws a continuous colored line from the upper-left corner.
+        # A lone matching game pixel elsewhere must not imply a full lap.
+        if len(checkpoint_values) < self.MIN_CHECKPOINT_COLOR_RUN:
             return -1
+        lap_color = checkpoint_values[0]
+        if lap_color < 1 or any(value != lap_color for value in
+                                checkpoint_values[:self.MIN_CHECKPOINT_COLOR_RUN]):
+            return -1
+        for index, value in enumerate(checkpoint_values):
+            if value != lap_color:
+                return index - 1
+        return len(checkpoint_values) - 1
 
     # https://stackoverflow.com/a/3844948
     # Efficiently determines if all items in a list are equal by 
@@ -257,11 +244,10 @@ class MarioKartEnv(Mupen64PlusEnv):
 
         self._wait(count=46, wait_for='race to load')
         
-        # Change HUD View twice to get to the one we want:
-        self._cycle_hud_view(times=2)
-
-        # Now that we have the HUD as needed, reset the race so we have a consistent starting frame:
+        # Retry for a consistent starting position, then select the progress HUD.
         self._reset_during_race()
+        self._wait(count=120, wait_for='race HUD to appear')
+        self._cycle_hud_view(times=2)
 
     def _navigate_game_select(self):
         # Select number of players (1 player highlighted by default)
