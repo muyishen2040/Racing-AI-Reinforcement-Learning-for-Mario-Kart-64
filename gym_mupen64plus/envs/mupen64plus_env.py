@@ -81,15 +81,18 @@ class Mupen64PlusEnv(gym.Env):
         initial_disp = os.environ["DISPLAY"]
         cprint('Initially on DISPLAY %s' % initial_disp, 'red')
 
-        # If the EXTERNAL_EMULATOR environment variable is True, we are running the
-        # emulator out-of-process (likely via docker/docker-compose). If not, we need
-        # to start the emulator in-process here
+        # Start the emulator only after its controller HTTP server is listening.
+        # Legacy deployments can still opt into an external emulator.
         external_emulator = os.environ.get('EXTERNAL_EMULATOR') == 'True'
         if not external_emulator:
-            self.xvfb_process, self.emulator_process = \
-                self._start_emulator(rom_name=self.config['ROM_NAME'],
-                                     gfx_plugin=self.config['GFX_PLUGIN'],
-                                     input_driver_path=self.config['INPUT_DRIVER_PATH'])
+            try:
+                self.xvfb_process, self.emulator_process = \
+                    self._start_emulator(rom_name=self.config['ROM_NAME'],
+                                         gfx_plugin=self.config['GFX_PLUGIN'],
+                                         input_driver_path=self.config['INPUT_DRIVER_PATH'])
+            except Exception:
+                self._stop_controller_server()
+                raise
 
         # TODO: Test and cleanup:
         # May need to initialize this after the DISPLAY env var has been set
@@ -97,16 +100,20 @@ class Mupen64PlusEnv(gym.Env):
         # come from the wrong place. This used to be true when we were using
         # wxPython for screenshots. Untested after switching to mss.
         cprint('Calling mss.mss() with DISPLAY %s' % os.environ["DISPLAY"], 'red')
-        self.mss_grabber = mss.mss()
-        time.sleep(2) # Give mss a couple seconds to initialize; also may not be necessary
+        try:
+            self.mss_grabber = mss.mss()
+            time.sleep(2) # Give mss a couple seconds to initialize; also may not be necessary
 
-        # Restore the DISPLAY env var
-        os.environ["DISPLAY"] = initial_disp
-        cprint('Changed back to DISPLAY %s' % os.environ["DISPLAY"], 'red')
+            # Restore the DISPLAY env var
+            os.environ["DISPLAY"] = initial_disp
+            cprint('Changed back to DISPLAY %s' % os.environ["DISPLAY"], 'red')
         
 
-        with self.controller_server.frame_skip_disabled():
-            self._navigate_menu()
+            with self.controller_server.frame_skip_disabled():
+                self._navigate_menu()
+        except Exception:
+            self._close()
+            raise
 
         self.observation_space = \
             spaces.Box(low=0, high=255, shape=(SCR_H, SCR_W, SCR_D), dtype=np.uint8)
@@ -227,8 +234,10 @@ class Mupen64PlusEnv(gym.Env):
     def _close(self):
         cprint('Close called!', 'yellow')
         self.running = False
-        self._stop_controller_server()
         self._kill_emulator()
+        self._stop_controller_server()
+        if hasattr(self, 'mss_grabber'):
+            self.mss_grabber.close()
 
     def _start_controller_server(self):
         server = ControllerHTTPServer(server_address  = ('', self.config['PORT_NUMBER']),
@@ -253,7 +262,7 @@ class Mupen64PlusEnv(gym.Env):
                         res_h=SCR_H,
                         res_d=SCR_D):
 
-        rom_path = os.path.abspath(
+        rom_path = os.environ.get('MARIOKART_ROM_PATH') or os.path.abspath(
             os.path.join(os.path.dirname(inspect.stack()[0][1]),
                          '../ROMs',
                          rom_name))
@@ -277,6 +286,9 @@ class Mupen64PlusEnv(gym.Env):
                "--gfx", gfx_plugin,
                "--audio", "dummy",
                "--input", input_driver_path,
+               "--set", "Input-Bot-Control0[plugged]=1",
+               "--set", "Input-Bot-Control0[host]=127.0.0.1",
+               "--set", "Input-Bot-Control0[port]=%s" % self.config['PORT_NUMBER'],
                rom_path]
 
         xvfb_proc = None
@@ -320,10 +332,12 @@ class Mupen64PlusEnv(gym.Env):
 
         cprint('Starting emulator with comand: %s' % cmd, 'yellow')
 
-        emulator_process = subprocess.Popen(cmd,
-                                            env=os.environ.copy(),
-                                            shell=False,
-                                            stderr=subprocess.STDOUT)
+        with open('/tmp/emulator.log', 'ab', buffering=0) as emulator_log:
+            emulator_process = subprocess.Popen(cmd,
+                                                env=os.environ.copy(),
+                                                shell=False,
+                                                stdout=emulator_log,
+                                                stderr=subprocess.STDOUT)
 
         emu_mon = EmulatorMonitor()
         monitor_thread = threading.Thread(target=emu_mon.monitor_emulator,
@@ -335,14 +349,17 @@ class Mupen64PlusEnv(gym.Env):
 
     def _kill_emulator(self):
         #cprint('Kill Emulator called!', 'yellow')
-        try:
-            self._act(ControllerState.NO_OP)
-            if self.emulator_process is not None:
-                self.emulator_process.kill()
-            if self.xvfb_process is not None:
-                self.xvfb_process.terminate()
-        except AttributeError:
-            pass # We may be shut down during intialization before these attributes have been set
+        emulator = getattr(self, 'emulator_process', None)
+        if emulator is not None and emulator.poll() is None:
+            emulator.terminate()
+            try:
+                emulator.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                emulator.kill()
+                emulator.wait()
+        xvfb = getattr(self, 'xvfb_process', None)
+        if xvfb is not None:
+            xvfb.terminate()
 
 
 ###############################################
@@ -422,9 +439,9 @@ class ControllerHTTPServer(HTTPServer, object):
         self.controls_updated.set()
 
         # Wait for response to actually be sent before returning:
-        if self.running:
-            self.response_sent.wait()
-            self.response_sent.clear()
+        if not self.running or not self.response_sent.wait(self.control_timeout):
+            raise TimeoutError("Input plugin did not poll the controller within %s seconds; check /tmp/emulator.log" % self.control_timeout)
+        self.response_sent.clear()
 
     def shutdown(self):
         self.running = False
@@ -445,8 +462,10 @@ class ControllerHTTPServer(HTTPServer, object):
     @contextmanager
     def frame_skip_disabled(self):
         self.frame_skip_enabled = False
-        yield True
-        self.frame_skip_enabled = True
+        try:
+            yield True
+        finally:
+            self.frame_skip_enabled = True
 
     class ControllerRequestHandler(BaseHTTPRequestHandler, object):
 

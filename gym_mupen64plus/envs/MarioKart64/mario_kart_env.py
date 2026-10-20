@@ -80,7 +80,7 @@ class MarioKartEnv(Mupen64PlusEnv):
     def _reset_during_race(self):
         # Can't pause the race until the light turns green
         if (self.step_count * self.controller_server.frame_skip) < 120:
-            steps_to_wait = 100 - (self.step_count * self.controller_server.frame_skip)
+            steps_to_wait = 120 - (self.step_count * self.controller_server.frame_skip)
             self._wait(count=steps_to_wait, wait_for='green light so we can pause')
         self._press_button(ControllerState.START_BUTTON)
         self._press_button(ControllerState.JOYSTICK_DOWN)
@@ -191,7 +191,7 @@ class MarioKartEnv(Mupen64PlusEnv):
         if any(val > -1 for val in checkpoint_values):
             
             # argmin tells us the first index with the lowest value
-            index_of_lowest_val = np.argmin(checkpoint_values)
+            index_of_lowest_val = int(np.argmin(checkpoint_values))
 
             if index_of_lowest_val != 0:
                 # If the argmin is anything but 0, we have achieved

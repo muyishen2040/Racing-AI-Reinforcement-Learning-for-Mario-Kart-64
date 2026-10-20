@@ -14,7 +14,7 @@ fi
 
 Xvfb :99 -screen 0 640x480x24 -ac -nolisten tcp >/tmp/xvfb.log 2>&1 &
 XVFB_PID=$!
-trap 'kill "$XVFB_PID" "${EMU_PID:-}" "${VNC_PID:-}" 2>/dev/null || true' EXIT
+trap 'kill "$XVFB_PID" "${VNC_PID:-}" 2>/dev/null || true' EXIT
 
 for i in $(seq 1 30); do
   if DISPLAY=:99 xdpyinfo >/dev/null 2>&1; then break; fi
@@ -26,14 +26,6 @@ DISPLAY=:99 xdpyinfo >/dev/null
 x11vnc -display :99 -forever -shared -viewonly -nopw -rfbport 5900 -quiet >/tmp/vnc.log 2>&1 &
 VNC_PID=$!
 
-# The input bot is configured to request commands from the Gymnasium controller HTTP server.
-mupen64plus --nospeedlimit --nosaveoptions --resolution 640x480 \
-  --gfx mupen64plus-video-glide64.so --audio dummy \
-  --input "$INPUT" \
-  --set 'Input-Bot-Control0[plugged]=1' \
-  --set 'Input-Bot-Control0[host]=127.0.0.1' \
-  --set 'Input-Bot-Control0[port]=8082' \
-  "$ROM" >/tmp/emulator.log 2>&1 &
-EMU_PID=$!
-
-exec python3 /app/simulator/server.py
+# The environment starts the emulator after its controller HTTP server is ready.
+# It also restarts the emulator when a client reconnects or changes tracks.
+python3 /app/simulator/server.py

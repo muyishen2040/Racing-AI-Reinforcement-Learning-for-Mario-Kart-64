@@ -3,7 +3,7 @@ PORT_NUMBER: 8082
 
 # How long, at most, in seconds to block waiting for the controller 
 #   server to send controls (the action) before returning:
-ACTION_TIMEOUT: 5
+ACTION_TIMEOUT: 30
 
 # TODO: Environment argument (with issue #26)
 # The number of frames to 'skip' per step

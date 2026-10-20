@@ -5,7 +5,6 @@ The emulator/Xvfb are launched by the container entrypoint, before this process.
 import logging
 import os
 import socket
-import traceback
 
 import gymnasium as gym
 import gym_mupen64plus
@@ -27,12 +26,17 @@ class SimulatorServer:
         self.env = None
         self.track = None
 
+    def close_environment(self):
+        env, self.env = self.env, None
+        self.track = None
+        if env is not None:
+            env.close()
+
     def reset(self, track):
         if track not in TRACKS:
             raise ValueError("Unknown track: " + str(track))
         if self.env is None or track != self.track:
-            if self.env is not None:
-                self.env.close()
+            self.close_environment()
             self.env = gym.make("Mario-Kart-" + track + "-v0")
             self.track = track
         observation, info = self.env.reset()
@@ -76,17 +80,17 @@ class SimulatorServer:
                                     raise ValueError("Unknown command")
                             except Exception as error:
                                 LOG.exception("Simulator command failed")
+                                if cmd in ("reset", "step"):
+                                    try:
+                                        self.close_environment()
+                                    except Exception:
+                                        LOG.exception("Could not close failed environment")
                                 answer = {"ok": False, "error": str(error)}
                             send_message(client, answer)
                     except (ConnectionError, OSError, ValueError) as error:
                         LOG.warning("Client disconnected: %s", error)
                     finally:
-                        if self.env is not None:
-                            try:
-                                self.env.close()
-                            finally:
-                                self.env = None
-                                self.track = None
+                        self.close_environment()
 
 
 if __name__ == "__main__":
