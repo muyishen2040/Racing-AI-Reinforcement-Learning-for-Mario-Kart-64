@@ -1,260 +1,170 @@
-from EnvReceiver import EnvReceiver
-import numpy as np
-from src.model import *
+"""Train Soft Actor-Critic with the hybrid 5-dim action space on one course.
+
+Observations are 4 stacked 128x128 grayscale frames. Checkpoints go to
+checkpoints/sac/ and TensorBoard logs to runs/. Run with --help for options.
+"""
+
+from __future__ import annotations
+
+import argparse
 import collections
 import random
-import torch
-import pdb
-from torch.utils.tensorboard import SummaryWriter
-import torchvision.transforms as transforms
-import gym
-import pickle
-from PIL import Image
 from collections import deque
+from dataclasses import dataclass
+from pathlib import Path
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+import numpy as np
+import torch
+from torch.utils.tensorboard import SummaryWriter
 
-class ReplayBuffer():
-    def __init__(self, buffer_maxlen):
-        self.buffer = collections.deque(maxlen=buffer_maxlen)
-        self.sequence_length = 16
+from mk64_env.wrappers import make_pixel_env
+from src.model import Actor, Critic, Entropy
 
-    def push(self, sequence):
-        self.buffer.append(sequence)
 
-    def sample(self, batch_size):
+@dataclass
+class Config:
+    """Hyperparameters for SAC training."""
+
+    course: str = "LuigiRaceway"
+    gamma: float = 0.99
+    tau: float = 0.01
+    entropy_lr: float = 1e-4
+    actor_lr: float = 3e-4
+    critic_lr: float = 3e-4
+    batch_size: int = 256
+    episodes: int = 10000
+    frame_skip: int = 4
+    stack_frames: int = 4
+    memory_len: int = 100_000
+    replay_buffer_warmup: int = 2000
+    stuck_window: int = 90
+    stuck_penalty: float = -10.0
+    checkpoint_dir: str = "checkpoints/sac"
+
+
+class ReplayBuffer:
+    """Fixed-size FIFO of transitions with uint8 observations."""
+
+    def __init__(self, maxlen: int):
+        """Create a buffer holding at most `maxlen` transitions."""
+        self.buffer: collections.deque = collections.deque(maxlen=maxlen)
+
+    def push(self, obs: np.ndarray, action: np.ndarray, reward: float, next_obs: np.ndarray, done: bool) -> None:
+        """Store one transition."""
+        self.buffer.append((obs, action, reward, next_obs, done))
+
+    def sample(self, batch_size: int, device: torch.device):
+        """Return a batch of float tensors on `device`, observations scaled to [0, 1]."""
         batch = random.sample(self.buffer, batch_size)
+        obs, actions, rewards, next_obs, dones = zip(*batch)
+        to_obs = lambda frames: torch.from_numpy(np.stack(frames)).to(device).float() / 255.0
+        return (
+            to_obs(obs),
+            torch.from_numpy(np.stack(actions)).float().to(device),
+            torch.tensor(rewards, dtype=torch.float32, device=device).unsqueeze(1),
+            to_obs(next_obs),
+            torch.tensor(dones, dtype=torch.float32, device=device).unsqueeze(1),
+        )
 
-        observation, actions, rewards, next_observations, dones = zip(*batch)
-
-        
-        try:
-            observation = torch.stack(observation).to(device)
-            actions = torch.from_numpy(np.array(actions)).to(device)
-            rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(device)
-            next_observations = torch.stack(next_observations).to(device)
-            dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(device)
-
-        except:
-            pdb.set_trace()
-
-        return observation, actions, rewards, next_observations, dones
-
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.buffer)
 
 
 class SAC:
-    def __init__(self, config):
+    """Actor, twin critics, and entropy temperature with one update step."""
+
+    def __init__(self, config: Config, device: torch.device):
+        """Build the networks on `device`."""
         self.config = config
-        
-        if 'expert_data' in config.keys():
-            with open(config['expert_data'], 'rb') as f:
-                self.memory = pickle.load(f)
-            print('Expert Data Loaded')
-        else:
-            self.memory = ReplayBuffer(config['memory_len'])
-        
-        self.actor = Actor(config['device'], config['actor_lr'], config['min_action'], config['max_action'])
-        self.critic = Critic(config['device'], config['critic_lr'], config['tau'])
-        self.entropy = Entropy(config['device'], config['entropy_lr'], 2)
+        self.device = device
+        self.memory = ReplayBuffer(config.memory_len)
+        min_action = torch.tensor([-80.0, -80.0, 0, 0, 0])
+        max_action = torch.tensor([80.0, 80.0, 1, 1, 1])
+        self.actor = Actor(device, config.actor_lr, min_action, max_action)
+        self.critic = Critic(device, config.critic_lr, config.tau)
+        self.entropy = Entropy(device, config.entropy_lr, 2)
 
-    def update(self):
-        states, actions, rewards, next_states, dones = self.memory.sample(self.config['batch_size'])
-        
+    def update(self) -> tuple[float, float, float]:
+        """Run one gradient step on a sampled batch. Returns actor, critic, and alpha losses."""
+        states, actions, rewards, next_states, dones = self.memory.sample(self.config.batch_size, self.device)
         with torch.no_grad():
-            new_action, log_prob_, z, mean, std = self.actor.evaluate(next_states)
+            new_action, log_prob_, _, _, _ = self.actor.evaluate(next_states)
             target_q1, target_q2 = self.critic.get_target_q_value(next_states, new_action)
-            target_q = rewards + (1 - dones) * self.config['gamma'] * (torch.min(target_q1, target_q2) - self.entropy.alpha * log_prob_)
-
-        actions = actions.squeeze()
+            target_q = rewards + (1 - dones) * self.config.gamma * (torch.min(target_q1, target_q2) - self.entropy.alpha * log_prob_)
         current_q1, current_q2 = self.critic.get_q_value(states, actions)
         q_loss = self.critic.learn(current_q1, current_q2, target_q.detach())
-
         a_, log_prob, _, _, _ = self.actor.evaluate(states)
         q1, q2 = self.critic.get_q_value(states, a_)
-        q = torch.min(q1, q2)
-        actor_loss = (self.entropy.alpha * log_prob - q).mean()
+        actor_loss = (self.entropy.alpha * log_prob - torch.min(q1, q2)).mean()
         self.actor.learn(actor_loss)
-
         alpha_loss = -(self.entropy.log_alpha.exp() * (log_prob + self.entropy.target_entropy).detach()).mean()
         self.entropy.learn(alpha_loss)
         self.entropy.alpha = self.entropy.log_alpha.exp()
-
         self.critic.update()
-
         return actor_loss.item(), q_loss, alpha_loss.item()
-        
 
-class FrameSkip():
-    def __init__(self, env, skip):
-        self.env = env
-        self._skip = skip
+    def save(self, directory: Path, tag: str) -> None:
+        """Write actor, critic, and log-alpha state dicts under `directory`."""
+        directory.mkdir(parents=True, exist_ok=True)
+        torch.save(self.actor.actor_net.state_dict(), directory / f"actor_{tag}.pth")
+        torch.save(self.critic.critic_net.state_dict(), directory / f"critic_{tag}.pth")
+        torch.save(self.entropy.log_alpha, directory / f"entropy_{tag}.pth")
 
-    def step(self, action):
-        total_reward = 0.0
-        done = False
-        for _ in range(self._skip):
-            obs, reward, done, info = self.env.step(action)
-            total_reward += reward
-            if done:
-                break
-        return obs, total_reward, done, info
-    
-    def reset(self):
-        ob = self.env.reset()
 
-        return ob
-
-class FrameStack():
-    def __init__(self, env, k):
-        self.env = env
-        self.k = k
-        self.frames = deque([], maxlen=k)
-        self.preprocess = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Grayscale(),
-            transforms.Resize((128, 128)),
-            transforms.ToTensor()
-        ])
-
-    def reset(self):
-        ob = self.env.reset()
-        for _ in range(self.k):
-            self.frames.append(self._preprocess_frame(ob))
-        return self._get_ob()
-
-    def step(self, action):
-        ob, reward, done, info = self.env.step(action)
-        self.frames.append(self._preprocess_frame(ob))
-        return self._get_ob(), reward, done, info
-
-    def _get_ob(self):
-        return torch.stack(list(self.frames), dim=0).squeeze()
-
-    def _preprocess_frame(self, frame):
-        return self.preprocess(frame)
-
-def main():
-
+def main() -> None:
+    """Train SAC until the episode budget is spent."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--course", default="LuigiRaceway")
+    parser.add_argument("--episodes", type=int, default=Config.episodes)
+    parser.add_argument("--memory-len", type=int, default=Config.memory_len)
+    parser.add_argument("--warmup", type=int, default=Config.replay_buffer_warmup, help="steps before updates start")
+    args = parser.parse_args()
+    config = Config(course=args.course, episodes=args.episodes, memory_len=args.memory_len, replay_buffer_warmup=args.warmup)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     writer = SummaryWriter()
-    
-    config = {
-        'device': device,
-        'gamma': 0.99,
-        'tau': 0.01,
-        'min_action': torch.tensor([-80.0, -80.0, 0, 0, 0]),
-        'max_action': torch.tensor([80.0, 80.0, 1, 1, 1]),
-        'action_dim': 5,
-        'memory_len': 1000000,
-        
-        # Learning rates for the first stage training
-        'entropy_lr': 1e-4,
-        'actor_lr': 3e-4,
-        'critic_lr': 3e-4,
-        
-        # Learning rates for the second stage training
-        # 'entropy_lr': 1e-5,
-        # 'actor_lr': 3e-5,
-        # 'critic_lr': 3e-5,
-        'batch_size': 256,
-        'episodes': 10000,
-        'skip_frame': 4,
-        'stack_frame': 4,
-        'replay_buffer_warmup': 2000
-        # 'warmup_steps': 1000,
-        # 'expert_data': 'replay_buffer.pkl'
-    }
-
-    orig_env = EnvReceiver()
-    
-    # The skip_env is commented since the original env has already employ frame skipping (5) 
-    # skip_env = FrameSkip(orig_env, config['skip_frame'])
-    
-    env = FrameStack(orig_env, config['stack_frame'])
-    reward_buffer = deque([], maxlen=90)
-    # reward_buffer = deque([], maxlen=180)
-    
-    agent = SAC(config)
-    
-    best_reward = -10000.0
+    env = make_pixel_env(config.course, config.frame_skip, 128, config.stack_frames)
+    agent = SAC(config, device)
+    checkpoint_dir = Path(config.checkpoint_dir)
+    best_reward = -np.inf
     cur_step = 0
-    
-    for episode in range(config['episodes']):
-        total_reward = 0
-        total_q_loss = 0
-        total_policy_loss = 0
-        total_alpha_loss = 0
+    for episode in range(config.episodes):
+        obs, _ = env.reset()
+        reward_window: deque = deque(maxlen=config.stuck_window)
+        total_reward = total_q = total_policy = total_alpha = 0.0
         done = False
-        obs = env.reset()
-        reward_buffer.clear()
-        
-        # The following code snippet save the observation stack into 4 image files
-        # obs_np = obs.numpy()
-        # for i in range(obs_np.shape[0]):
-        #     frame = obs_np[i]
-        #     frame_img = Image.fromarray((frame * 255).astype(np.uint8), mode='L')
-        #     frame_img.save(f'frame_{i}.png')
         step_in_episode = 0
-        
         while not done:
             cur_step += 1
             step_in_episode += 1
-
-            if cur_step == config['replay_buffer_warmup']:
-                print('------------------------------')
-                print('--------Training Start--------')
-                print('------------------------------')
-            
-            if cur_step % 10000 == 0:
-                print('Current Training Step:', cur_step)
-            
-            action = agent.actor.choose_action(obs.unsqueeze(0).to(device))
-            # print(action)
-            
-            next_obs, reward, done, info = env.step(action.flatten().tolist())
-            reward_buffer.append(reward)
-            if step_in_episode > 90 and sum(reward_buffer) / len(reward_buffer) <= -0.099:
-                early_stop_reward = (1250 - step_in_episode) * -0.1
-                reward += early_stop_reward
-                done = True
-            print(reward, "      ", end='\r')
-            # print(reward)
+            with torch.no_grad():
+                action = agent.actor.choose_action(torch.from_numpy(np.asarray(obs)).unsqueeze(0).float().div(255).to(device))
+            action = action.flatten()
+            next_obs, reward, terminated, truncated, info = env.step(action)
+            reward_window.append(reward)
+            if step_in_episode > config.stuck_window and sum(reward_window) <= 0.0:
+                reward += config.stuck_penalty
+                terminated = True
+            done = terminated or truncated
             total_reward += reward
-            
-            if not ('expert_data' in config.keys() and cur_step < config['warmup_steps']):
-                agent.memory.push((obs, action.flatten(), reward, next_obs, done))
-            
+            agent.memory.push(np.asarray(obs), action, reward, np.asarray(next_obs), terminated)
             obs = next_obs
-            
-            if len(agent.memory) > config['batch_size'] and len(agent.memory) > config['replay_buffer_warmup']:
+            if len(agent.memory) > max(config.batch_size, config.replay_buffer_warmup):
                 policy_loss, q_loss, alpha_loss = agent.update()
-                total_q_loss += q_loss
-                total_policy_loss += policy_loss
-                total_alpha_loss += alpha_loss
-                # print(agent.actor.actor_net.forward_bias)
-            
-        
+                total_q += q_loss
+                total_policy += policy_loss
+                total_alpha += alpha_loss
         writer.add_scalar("Reward/episode", total_reward, episode)
-        writer.add_scalar("Loss/q_loss", total_q_loss/step_in_episode, episode)
-        writer.add_scalar("Loss/policy_loss", total_policy_loss/step_in_episode, episode)
-        writer.add_scalar("Loss/alpha_loss", total_alpha_loss/step_in_episode, episode)
-        writer.add_scalar("Alpha/alpha", agent.entropy.alpha, episode)
-        print(f"Episode {episode + 1}: Total Reward: {total_reward}, q_loss: {total_q_loss/step_in_episode}, policy_loss: {total_policy_loss/step_in_episode}, alpha_loss: {total_alpha_loss/step_in_episode}, alpha: {agent.entropy.alpha.item()}, num_step: {step_in_episode}")
-        
+        writer.add_scalar("Progress/episode", info["progress"], episode)
+        writer.add_scalar("Loss/q_loss", total_q / step_in_episode, episode)
+        writer.add_scalar("Loss/policy_loss", total_policy / step_in_episode, episode)
+        writer.add_scalar("Loss/alpha_loss", total_alpha / step_in_episode, episode)
+        writer.add_scalar("Alpha/alpha", agent.entropy.alpha.item(), episode)
+        print(f"episode {episode + 1} reward {total_reward:.2f} progress {info['progress']:.3f} steps {step_in_episode} total_steps {cur_step}")
         if total_reward > best_reward:
-            print('\n----------------------')
-            print('New best episode: {}'.format(total_reward))
-            torch.save(agent.actor.actor_net, 'agent_actor.pth')
-            torch.save(agent.critic.critic_net, 'agent_critic.pth') 
-            torch.save(agent.entropy.log_alpha, 'agent_entropy.pth') 
-            print('----------------------\n')
             best_reward = total_reward
-
+            agent.save(checkpoint_dir, "best")
         if episode % 50 == 0 and episode > 0:
-            torch.save(agent.actor.actor_net, 'actor_{}.pth'.format(episode))
-            torch.save(agent.critic.critic_net, 'critic_{}.pth'.format(episode))
-            torch.save(agent.entropy.log_alpha, 'entropy_{}.pth'.format(episode))
+            agent.save(checkpoint_dir, str(episode))
 
 
 if __name__ == "__main__":

@@ -1,96 +1,54 @@
-from EnvReceiver import EnvReceiver
+"""Evaluate a saved SAC actor for a few episodes and print the returns.
+
+Usage: python test.py checkpoints/sac/actor_best.pth [--episodes 10] [--video out.mp4]
+"""
+
+from __future__ import annotations
+
+import argparse
+
 import numpy as np
-from src.model import *
-import collections
-import random
 import torch
-import pdb
-from torch.utils.tensorboard import SummaryWriter
-import torchvision.transforms as transforms
-import gym
-import pickle
-from PIL import Image
-from collections import deque
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-class FrameStack():
-    def __init__(self, env, k):
-        self.env = env
-        self.k = k
-        self.frames = deque([], maxlen=k)
-        self.preprocess = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Grayscale(),
-            transforms.Resize((128, 128)),
-            transforms.ToTensor()
-        ])
-
-    def reset(self):
-        ob = self.env.reset()
-        for _ in range(self.k):
-            self.frames.append(self._preprocess_frame(ob))
-        return self._get_ob()
-
-    def step(self, action):
-        ob, reward, done, info = self.env.step(action)
-        self.frames.append(self._preprocess_frame(ob))
-        return self._get_ob(), reward, done, info
-
-    def _get_ob(self):
-        return torch.stack(list(self.frames), dim=0).squeeze()
-
-    def _preprocess_frame(self, frame):
-        return self.preprocess(frame)
-
-class Agent():
-    def __init__(self):
-        self.actor_net = torch.load('checkpoint/agent_actor_third.pth')
-
-    def choose_action(self, state):
-        mean, std, binary_logits = self.actor_net(state)
-        dist = torch.distributions.Normal(mean, std)
-        continuous_action = dist.sample()
-        continuous_action = torch.tanh(continuous_action)
-        continuous_action = continuous_action * 80
-
-        binary_dist = torch.distributions.Bernoulli(logits=binary_logits)
-        binary_action = binary_dist.sample()
-        
-        action = torch.cat([continuous_action, binary_action], dim=-1)
-        
-        return action.detach().cpu().numpy()
+from mk64_env.video import VideoRecorder
+from mk64_env.wrappers import make_pixel_env
+from src.model import ActorNet
 
 
-def main():
-    
-    config = {
-        'stack_frame': 4,
-    }
-
-    orig_env = EnvReceiver()
-    env = FrameStack(orig_env, config['stack_frame'])
-
-    agent = Agent()
-    # pdb.set_trace()
-    # torch.save(agent.actor_net.state_dict(), 'actor_net_dict.pth')
-    
-    for episode in range(10):
-        total_reward = 0
+def main() -> None:
+    """Load the actor and run evaluation episodes with sampled actions."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("actor")
+    parser.add_argument("--course", default="LuigiRaceway")
+    parser.add_argument("--episodes", type=int, default=10)
+    parser.add_argument("--video", default=None)
+    args = parser.parse_args()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    actor = ActorNet(80).to(device)
+    actor.load_state_dict(torch.load(args.actor, map_location=device))
+    actor.eval()
+    env = make_pixel_env(args.course, render_mode="rgb_array")
+    recorder = VideoRecorder(args.video, fps=15) if args.video else None
+    for episode in range(args.episodes):
+        obs, _ = env.reset()
+        total = 0.0
         done = False
-        obs = env.reset()
-        step_in_episode = 0
-        
         while not done:
-            step_in_episode += 1
-            action = agent.choose_action(obs.unsqueeze(0).to(device))
-            
-            next_obs, reward, done, info = env.step(action.flatten().tolist())
-            total_reward += reward
-            
-            obs = next_obs
-
-        print(f"Episode {episode + 1}: Total Reward: {total_reward}")
+            state = torch.from_numpy(np.asarray(obs)).unsqueeze(0).float().div(255).to(device)
+            with torch.no_grad():
+                mean, std, binary_logits = actor(state)
+            continuous = torch.tanh(torch.distributions.Normal(mean, std).sample()) * 80
+            binary = torch.distributions.Bernoulli(logits=binary_logits).sample()
+            action = torch.cat([continuous, binary], dim=-1).cpu().numpy().flatten()
+            obs, reward, terminated, truncated, info = env.step(action)
+            total += reward
+            done = terminated or truncated
+            if recorder:
+                recorder.add(env.render())
+        print(f"episode {episode + 1}: reward {total:.2f} progress {info['progress']:.3f} lap {info['lap']}")
+    if recorder:
+        recorder.close()
+    env.close()
 
 
 if __name__ == "__main__":

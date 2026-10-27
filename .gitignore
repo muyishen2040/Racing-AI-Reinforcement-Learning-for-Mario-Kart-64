@@ -1,5 +1,12 @@
 *.pyc
+__pycache__/
 *.egg-info/
 *.pth
+*.pkl
+.venv/
 RL_env/
 runs/
+checkpoints/
+cores/
+.mk64_cache/
+*.mp4

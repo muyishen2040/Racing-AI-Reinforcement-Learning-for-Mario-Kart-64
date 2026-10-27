@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mk64-env"
+version = "1.0.0"
+description = "Headless Gymnasium environment for Mario Kart 64 on the Mupen64Plus-Next libretro core"
+requires-python = ">=3.11"
+dependencies = [
+    "libretro.py>=0.12",
+    "numpy>=1.26",
+    "gymnasium>=1.0",
+    "pillow>=10",
+    "imageio>=2.31",
+    "imageio-ffmpeg>=0.4",
+]
+
+[project.optional-dependencies]
+train = ["torch>=2.4", "torchvision", "tensorboard", "tqdm", "pygame"]
+test = ["pytest"]
+
+[tool.setuptools]
+packages = ["mk64_env"]
