@@ -10,3 +10,5 @@ checkpoints/
 cores/
 .mk64_cache/
 *.mp4
+roms/
+outputs/

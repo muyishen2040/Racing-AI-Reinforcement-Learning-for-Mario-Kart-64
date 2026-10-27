@@ -13,16 +13,26 @@ This project started as a fork of [bzier/gym-mupen64plus](https://github.com/bzi
 
 ## Setup
 
-Requirements: Linux x86_64, Python 3.11 or newer, ffmpeg (for videos), and a
-US Mario Kart 64 ROM.
+Requirements: Linux x86_64, Python 3.11 or newer, and a US Mario Kart 64
+ROM. The ROM is not in the repository.
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e ".[train,test]"     # drop [train] to skip torch
 scripts/fetch_core.sh              # downloads cores/mupen64plus_next_libretro.so
 cp /path/to/your/rom roms/marioKart.n64
-pytest tests                       # about 15 s; generates the Luigi Raceway savestate
+pytest                             # about 15 s; generates the Luigi Raceway savestate
+python scripts/smoke_test.py       # writes outputs/smoke/*.png for a visual check
 ```
+
+`scripts/fetch_core.sh` checks the core against a pinned SHA-256, because
+the libretro buildbot serves only its latest nightly. When upstream rebuilds
+the core, the script refuses the download; rerun it with
+`MK64_ACCEPT_NEW_CORE=1`, run `pytest`, and update the pin.
+`docs/validation.md` records what the pinned build passed.
+
+`pytest -m "not emulator"` runs the tests that need neither the core nor
+the ROM. GitHub Actions runs those on every push (`.github/workflows/ci.yml`).
 
 The environment looks for the core at `cores/mupen64plus_next_libretro.so`,
 the ROM at `roms/marioKart.n64`, and caches savestates in `.mk64_cache/`.
@@ -45,8 +55,9 @@ obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 - Reward: 100 times the change in course progress (one unit per lap).
 - `terminated` when the third lap completes; `truncated` after `max_steps`.
 - `info` carries lap, progress, speed, timer, position, and yaw.
-- `frame_skip` (default 4) frames per step. The core runs at about 150 to
-  240 frames per second per instance on one CPU core.
+- `frame_skip` (default 4) frames per step. One step costs about 30 CPU-ms
+  with a single renderer thread; `docs/validation.md` has the measurements
+  and the setting for parallel instances.
 - Every course in `mk64_env.COURSES` and character in `mk64_env.CHARACTERS`
   is available. The first reset on a new course walks the menus once
   (about 10 s) and caches the savestate.
@@ -60,7 +71,9 @@ the training scripts use.
 
 | Script | Purpose |
 |---|---|
+| `scripts/smoke_test.py` | Drive for a few seconds, save screenshots, and check steering and resets |
 | `scripts/random_agent.py` | Run a random or hold-A episode, optionally recording MP4 |
+| `scripts/bench.py` | Measure CPU seconds per step, alone and in parallel |
 | `train_sac.py` | Soft Actor-Critic with the hybrid action space |
 | `test.py` | Evaluate a saved actor |
 | `GetExpertData.py` | Record a gamepad demonstration to a pickle |
@@ -69,3 +82,14 @@ the training scripts use.
 | `grad_cam.py` | Grad-CAM video of a demonstration |
 
 Networks live in `src/model.py`.
+
+## Docker
+
+`Dockerfile` builds a CPU-only image that runs the smoke test by default.
+`docs/cloud.md` has the commands and notes for running it on a small cloud VM.
+
+## Documentation
+
+- `docs/ram_map.md`: the RAM addresses behind rewards and episode ends, with evidence.
+- `docs/validation.md`: what was tested on which core build, and what was not.
+- `docs/cloud.md`: Docker image usage and Azure sizing, cost, and network rules.

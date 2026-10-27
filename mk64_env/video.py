@@ -8,6 +8,17 @@ import imageio.v2 as imageio
 import numpy as np
 
 
+def stretch_frame(frame: np.ndarray) -> np.ndarray:
+    """Double the rows of a 640x240 field so the image has the game's 4:3 aspect.
+
+    Frames that are already at least half as tall as they are wide are
+    returned unchanged.
+    """
+    if frame.shape[1] >= 2 * frame.shape[0]:
+        return np.repeat(frame, 2, axis=0)
+    return frame
+
+
 class VideoRecorder:
     """Accumulate RGB frames and write them as H.264 MP4 on close().
 
@@ -21,9 +32,7 @@ class VideoRecorder:
 
     def add(self, frame: np.ndarray) -> None:
         """Append one (H, W, 3) uint8 frame."""
-        if frame.shape[1] >= 2 * frame.shape[0]:
-            frame = np.repeat(frame, 2, axis=0)
-        self._writer.append_data(frame)
+        self._writer.append_data(stretch_frame(frame))
 
     def close(self) -> None:
         """Finish the file."""

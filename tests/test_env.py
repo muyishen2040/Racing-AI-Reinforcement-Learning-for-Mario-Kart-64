@@ -6,9 +6,12 @@ import pytest
 import mk64_env
 from mk64_env.env import DEFAULT_CORE, DEFAULT_ROM
 
-pytestmark = pytest.mark.skipif(
-    not (DEFAULT_CORE.is_file() and DEFAULT_ROM.is_file()), reason="core or ROM missing"
-)
+pytestmark = [
+    pytest.mark.emulator,
+    pytest.mark.skipif(
+        not (DEFAULT_CORE.is_file() and DEFAULT_ROM.is_file()), reason="core or ROM missing"
+    ),
+]
 
 STRAIGHT = 1
 
@@ -57,6 +60,21 @@ def test_reset_is_deterministic(env):
     first = [env.step(STRAIGHT)[4]["position"] for _ in range(30)]
     env.reset()
     second = [env.step(STRAIGHT)[4]["position"] for _ in range(30)]
+    assert first == second
+
+
+def test_first_reset_matches_reset_after_driving():
+    """A fresh core's first reset and a mid-race reset give the same trajectory."""
+    fresh = mk64_env.MarioKartDiscreteEnv(course="LuigiRaceway")
+    try:
+        fresh.reset()
+        first = [fresh.step(STRAIGHT)[4]["position"] for _ in range(5)]
+        for _ in range(40):
+            fresh.step(STRAIGHT)
+        fresh.reset()
+        second = [fresh.step(STRAIGHT)[4]["position"] for _ in range(5)]
+    finally:
+        fresh.close()
     assert first == second
 
 

@@ -22,3 +22,6 @@ test = ["pytest"]
 
 [tool.setuptools]
 packages = ["mk64_env"]
+
+[tool.pytest.ini_options]
+markers = ["emulator: needs cores/ and roms/; deselect in CI with -m 'not emulator'"]

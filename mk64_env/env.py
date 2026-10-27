@@ -114,6 +114,9 @@ class MarioKartEnv(gym.Env):
         super().reset(seed=seed)
         if self._start_state is None:
             self._start_state = load_or_create_start_state(self.core, self.cache_dir, self.course, self.character)
+        # The controller state latched in the frame before unserialize leaks
+        # into the first frame after it, so neutralize it before loading.
+        self.core.run_frames(1, ControllerInput())
         self.core.load_state(self._start_state)
         self.core.run_frames(1, ControllerInput())
         state = read_race_state(self.core)
