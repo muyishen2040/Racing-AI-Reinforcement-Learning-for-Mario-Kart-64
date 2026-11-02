@@ -83,6 +83,37 @@ the training scripts use.
 
 Networks live in `src/model.py`.
 
+## Resuming SAC training
+
+SAC writes `checkpoints/sac/latest.pt` every 1,000 environment steps and on
+a graceful Ctrl+C or SIGTERM. It includes the model and target networks,
+optimizers, replay buffer, counters, training configuration, and random
+generator states. Checkpoints are written to a temporary file and then
+replaced atomically. Use `--checkpoint-every N` to adjust the interval.
+For example:
+
+```bash
+python train_sac.py --memory-len 10000 --preview
+# After Ctrl+C and the recovery checkpoint has finished saving:
+python train_sac.py --resume --preview
+```
+
+`--episodes` is the total episode target including earlier episodes. A
+checkpoint taken mid-episode resumes at the beginning of that episode, not
+the exact emulator frame; any work since the last checkpoint can be lost on
+a crash, forced kill, or sudden shutdown. Always stop the training process
+gracefully and wait for it to exit before stopping the instance. A replay
+buffer can make checkpoints large, and saving temporarily needs enough disk
+space for both the old and the new checkpoint. Recovery files use Python
+pickle: only load checkpoints from trusted sources.
+
+Old `actor_best.pth`, `critic_best.pth`, and `entropy_best.pth` files are model
+weights, not full recovery checkpoints. To start a **new** run from them,
+use `python train_sac.py --init-from checkpoints/sac --memory-len 10000`.
+This starts a fresh replay buffer and optimizers; it cannot restore the old
+run's in-memory state. By default a new run refuses to overwrite an existing
+`latest.pt`; use `--resume` or choose another `--checkpoint-dir`.
+
 ## Live preview over VNC
 
 The optional preview shows full-colour emulator frames while the agent still
