@@ -18,6 +18,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from mk64_env.wrappers import make_pixel_env
+from mk64_env.preview import LivePreview
 from src.model import Actor, Critic, Entropy
 
 
@@ -118,11 +119,14 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=Config.episodes)
     parser.add_argument("--memory-len", type=int, default=Config.memory_len)
     parser.add_argument("--warmup", type=int, default=Config.replay_buffer_warmup, help="steps before updates start")
+    parser.add_argument("--preview", action="store_true", help="show emulator frames in a window")
+    parser.add_argument("--preview-every", type=int, default=4, help="update the window every N steps")
     args = parser.parse_args()
     config = Config(course=args.course, episodes=args.episodes, memory_len=args.memory_len, replay_buffer_warmup=args.warmup)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     writer = SummaryWriter()
-    env = make_pixel_env(config.course, config.frame_skip, 128, config.stack_frames)
+    preview = LivePreview(args.preview_every) if args.preview else None
+    env = make_pixel_env(config.course, config.frame_skip, 128, config.stack_frames, render_mode="rgb_array" if preview else None)
     agent = SAC(config, device)
     checkpoint_dir = Path(config.checkpoint_dir)
     best_reward = -np.inf
@@ -140,6 +144,8 @@ def main() -> None:
                 action = agent.actor.choose_action(torch.from_numpy(np.asarray(obs)).unsqueeze(0).float().div(255).to(device))
             action = action.flatten()
             next_obs, reward, terminated, truncated, info = env.step(action)
+            if preview:
+                preview.show(env.render(), cur_step)
             reward_window.append(reward)
             if step_in_episode > config.stuck_window and sum(reward_window) <= 0.0:
                 reward += config.stuck_penalty
@@ -165,6 +171,10 @@ def main() -> None:
             agent.save(checkpoint_dir, "best")
         if episode % 50 == 0 and episode > 0:
             agent.save(checkpoint_dir, str(episode))
+    if preview:
+        preview.close()
+    env.close()
+    writer.close()
 
 
 if __name__ == "__main__":

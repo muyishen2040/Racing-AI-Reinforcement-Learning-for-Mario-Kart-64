@@ -83,6 +83,48 @@ the training scripts use.
 
 Networks live in `src/model.py`.
 
+## Live preview over VNC
+
+The optional preview shows full-colour emulator frames while the agent still
+receives its normal grayscale observations. Install the preview dependencies
+with `pip install -e '.[preview]'` (they are also included in `[train]`).
+Start a graphical display, then run one of:
+
+```bash
+python scripts/random_agent.py --agent straight --steps 1000 --preview
+python train_sac.py --preview
+python test.py checkpoints/sac/actor_best.pth --preview
+```
+
+The window updates every four environment steps by default; use
+`--preview-every 1` for more frequent updates or a larger value to reduce
+overhead. Closing the window disables the preview without ending training.
+Without `--preview` the scripts remain headless. Previewing can slow training.
+
+For an EC2 instance, run TigerVNC on the instance bound to localhost and
+connect from your computer through an SSH tunnel. For example, after
+installing `tigervnc-standalone-server` and `openbox` on Ubuntu:
+
+```bash
+vncserver :1 -localhost yes -SecurityTypes None -geometry 1024x768 -xstartup /usr/bin/openbox
+export DISPLAY=:1
+cd ~/mariokart64
+python scripts/random_agent.py --agent straight --steps 1000 --preview
+```
+
+This example uses SSH authentication rather than a VNC password: other local
+users on the EC2 host can access the display, so use a VNC password or separate
+user isolation on a shared machine. Do not expose TCP 5901 to the internet.
+From Windows PowerShell, keep this SSH session open and connect a VNC viewer to
+`localhost:5901`:
+
+```powershell
+ssh -i "$env:USERPROFILE\.ssh\id_ed25519" -L 5901:localhost:5901 ubuntu@<EC2-public-IP>
+```
+
+Stop the display with `vncserver -kill :1` when no longer needed. The instance
+continues to incur compute charges until stopped.
+
 ## Docker
 
 `Dockerfile` builds a CPU-only image that runs the smoke test by default.
