@@ -122,6 +122,13 @@ From Windows PowerShell, keep this SSH session open and connect a VNC viewer to
 ssh -i "$env:USERPROFILE\.ssh\id_ed25519" -L 5901:localhost:5901 ubuntu@<EC2-public-IP>
 ```
 
+For an EC2 instance and Windows AWS CLI profile, the helper
+`powershell -ExecutionPolicy Bypass -File scripts/connect_vnc.ps1 -InstanceId <instance-id> -Profile <profile>` starts
+the remote display if needed, opens the tunnel and launches the local
+TigerVNC viewer. It assumes the instance is already running and the viewer
+is installed at `%LOCALAPPDATA%\mk64-tools\vncviewer.exe`; use its parameters
+to override paths or the instance ID. Closing the viewer closes its tunnel.
+
 Stop the display with `vncserver -kill :1` when no longer needed. The instance
 continues to incur compute charges until stopped.
 
