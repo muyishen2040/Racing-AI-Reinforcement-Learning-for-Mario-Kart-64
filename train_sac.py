@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import math
 import os
 import random
 import signal
@@ -73,6 +74,12 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
+def hybrid_actor_loss(q, continuous_log_prob, binary_log_prob, alpha):
+    """SAC objective with a score-function gradient for discrete buttons."""
+    weight = alpha * (binary_log_prob.detach() + 1.0) - q.detach()
+    return (alpha * continuous_log_prob - q + weight * binary_log_prob).mean()
+
+
 class SAC:
     """Actor, twin critics, and entropy temperature with one update step."""
 
@@ -86,6 +93,9 @@ class SAC:
         self.actor = Actor(device, config.actor_lr, min_action, max_action)
         self.critic = Critic(device, config.critic_lr, config.tau)
         self.entropy = Entropy(device, config.entropy_lr, 2)
+        # Target entropy in normalized joystick units plus half of the maximum
+        # entropy of the three independent binary buttons.
+        self.entropy.target_entropy = -2.0 + 1.5 * math.log(2.0)
 
     def update(self) -> tuple[float, float, float]:
         """Run one gradient step on a sampled batch. Returns actor, critic, and alpha losses."""
@@ -96,11 +106,15 @@ class SAC:
             target_q = rewards + (1 - dones) * self.config.gamma * (torch.min(target_q1, target_q2) - self.entropy.alpha * log_prob_)
         current_q1, current_q2 = self.critic.get_q_value(states, actions)
         q_loss = self.critic.learn(current_q1, current_q2, target_q.detach())
-        a_, log_prob, _, _, _ = self.actor.evaluate(states)
+        a_, log_prob, continuous_log_prob, binary_log_prob, _ = self.actor.evaluate(states)
         q1, q2 = self.critic.get_q_value(states, a_)
-        actor_loss = (self.entropy.alpha * log_prob - torch.min(q1, q2)).mean()
+        q = torch.min(q1, q2)
+        # Bernoulli samples do not have a pathwise derivative. Use a score
+        # function estimator for buttons and reparameterization for the stick.
+        alpha = self.entropy.alpha.detach()
+        actor_loss = hybrid_actor_loss(q, continuous_log_prob, binary_log_prob, alpha)
         self.actor.learn(actor_loss)
-        alpha_loss = -(self.entropy.log_alpha.exp() * (log_prob + self.entropy.target_entropy).detach()).mean()
+        alpha_loss = -(self.entropy.log_alpha * (log_prob + self.entropy.target_entropy).detach()).mean()
         self.entropy.learn(alpha_loss)
         self.entropy.alpha = self.entropy.log_alpha.exp()
         self.critic.update()
@@ -113,12 +127,12 @@ class SAC:
         torch.save(self.critic.critic_net.state_dict(), directory / f"critic_{tag}.pth")
         torch.save(self.entropy.log_alpha, directory / f"entropy_{tag}.pth")
 
-    def save_training_state(self, path: Path, *, episode: int, step: int, best_reward: float) -> None:
+    def save_training_state(self, path: Path, *, episode: int, step: int, best_reward: float, best_eval_progress: float = -math.inf) -> None:
         """Atomically save the state needed to continue at an episode boundary."""
         path.parent.mkdir(parents=True, exist_ok=True)
         state = {
-            "version": 1, "config": asdict(self.config), "episode": episode,
-            "step": step, "best_reward": best_reward,
+            "version": 1, "algorithm_version": 2, "config": asdict(self.config), "episode": episode,
+            "step": step, "best_reward": best_reward, "best_eval_progress": best_eval_progress,
             "actor": self.actor.actor_net.state_dict(),
             "critic": self.critic.critic_net.state_dict(),
             "target": self.critic.target_net.state_dict(),
@@ -145,6 +159,12 @@ class SAC:
         self.critic.critic_net.load_state_dict(state["critic"])
         self.critic.target_net.load_state_dict(state["target"])
         self.actor.optimizer.load_state_dict(state["actor_optimizer"])
+        if state.get("algorithm_version", 1) < 2:
+            # Earlier runs forced A on with a bias of 10. Make button
+            # exploration possible and clear the stale Adam state for it.
+            with torch.no_grad():
+                self.actor.actor_net.forward_bias.clamp_(max=2.0)
+            self.actor.optimizer.state.pop(self.actor.actor_net.forward_bias, None)
         self.critic.optimizer.load_state_dict(state["critic_optimizer"])
         with torch.no_grad():
             self.entropy.log_alpha.copy_(state["log_alpha"])
@@ -170,6 +190,32 @@ class SAC:
         self.entropy.alpha = self.entropy.log_alpha.exp()
 
 
+def evaluate_policy(agent: SAC, config: Config, episodes: int, max_steps: int, should_stop):
+    """Measure deterministic policy progress on separate evaluation episodes."""
+    env = make_pixel_env(config.course, config.frame_skip, 128, config.stack_frames, max_steps=max_steps)
+    progress, returns, completed = [], [], 0
+    try:
+        for _ in range(episodes):
+            obs, _ = env.reset()
+            total, done = 0.0, False
+            while not done:
+                if should_stop():
+                    return None
+                state = torch.from_numpy(np.asarray(obs)).unsqueeze(0).float().div(255).to(agent.device)
+                with torch.no_grad():
+                    mean, _, logits = agent.actor.actor_net(state)
+                    action = torch.cat([torch.tanh(mean) * 80.0, (logits >= 0).float()], dim=-1)
+                obs, reward, terminated, truncated, info = env.step(action.cpu().numpy().flatten())
+                total += reward
+                done = terminated or truncated
+            progress.append(info["progress"])
+            returns.append(total)
+            completed += int(terminated)
+        return float(np.mean(progress)), float(np.mean(returns)), completed / episodes
+    finally:
+        env.close()
+
+
 def main() -> None:
     """Train SAC until the episode budget is spent."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -179,6 +225,9 @@ def main() -> None:
     parser.add_argument("--warmup", type=int, default=None, help="steps before updates start")
     parser.add_argument("--checkpoint-dir", default=None)
     parser.add_argument("--checkpoint-every", type=int, default=1000, help="save recovery state at least every N steps")
+    parser.add_argument("--eval-every", type=int, default=20, help="evaluate every N completed episodes; 0 disables")
+    parser.add_argument("--eval-episodes", type=int, default=3)
+    parser.add_argument("--eval-max-steps", type=int, default=1000)
     resume = parser.add_mutually_exclusive_group()
     resume.add_argument("--resume", nargs="?", const="", default=None, metavar="PATH", help="resume a trusted recovery checkpoint (default: checkpoint-dir/latest.pt)")
     resume.add_argument("--init-from", metavar="DIR", help="initialize a new run from legacy best weights")
@@ -187,6 +236,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.checkpoint_every < 1:
         parser.error("--checkpoint-every must be at least 1")
+    if args.eval_every < 0 or args.eval_episodes < 1 or args.eval_max_steps < 1:
+        parser.error("eval-every must be nonnegative and evaluation sizes must be positive")
     checkpoint_dir = Path(args.checkpoint_dir or Config.checkpoint_dir)
     recovery_path = checkpoint_dir / "latest.pt"
     saved = None
@@ -228,13 +279,16 @@ def main() -> None:
     if saved is not None:
         agent.load_training_state(saved)
         start_episode, cur_step, best_reward = saved["episode"], saved["step"], saved["best_reward"]
+        best_eval_progress = saved.get("best_eval_progress", -math.inf)
+        if saved.get("algorithm_version", 1) < 2:
+            print("Migrated previous checkpoint to the revised hybrid SAC update.", flush=True)
         print(f"Resumed at episode {start_episode + 1}, step {cur_step}; replay contains {len(agent.memory)} transitions", flush=True)
         del saved
     else:
         if args.init_from:
             agent.load_legacy_weights(Path(args.init_from))
             print("Initialized from legacy weights; optimizer and replay buffer start fresh.", flush=True)
-        start_episode, cur_step, best_reward = 0, 0, -np.inf
+        start_episode, cur_step, best_reward, best_eval_progress = 0, 0, -np.inf, -math.inf
     stop_requested = False
     def request_stop(signum, frame):
         nonlocal stop_requested
@@ -272,7 +326,7 @@ def main() -> None:
                 total_policy += policy_loss
                 total_alpha += alpha_loss
             if not done and (stop_requested or cur_step - last_saved_step >= args.checkpoint_every):
-                agent.save_training_state(recovery_path, episode=episode, step=cur_step, best_reward=best_reward)
+                agent.save_training_state(recovery_path, episode=episode, step=cur_step, best_reward=best_reward, best_eval_progress=best_eval_progress)
                 last_saved_step = cur_step
                 print(f"Recovery checkpoint saved at step {cur_step} (resumes at a new episode).", flush=True)
                 if stop_requested:
@@ -288,11 +342,23 @@ def main() -> None:
         print(f"episode {episode + 1} reward {total_reward:.2f} progress {info['progress']:.3f} steps {step_in_episode} total_steps {cur_step}")
         if total_reward > best_reward:
             best_reward = total_reward
-            agent.save(checkpoint_dir, "best")
+            agent.save(checkpoint_dir, "training_best")
         if episode % 50 == 0 and episode > 0:
             agent.save(checkpoint_dir, str(episode))
+        if not stop_requested and args.eval_every and (episode + 1) % args.eval_every == 0:
+            print(f"Evaluating {args.eval_episodes} deterministic episodes...", flush=True)
+            evaluation = evaluate_policy(agent, config, args.eval_episodes, args.eval_max_steps, lambda: stop_requested)
+            if evaluation is not None:
+                mean_progress, mean_return, completion_rate = evaluation
+                writer.add_scalar("Evaluation/progress", mean_progress, episode)
+                writer.add_scalar("Evaluation/return", mean_return, episode)
+                writer.add_scalar("Evaluation/completion_rate", completion_rate, episode)
+                print(f"evaluation: mean progress {mean_progress:.3f}, mean reward {mean_return:.2f}, completion {completion_rate:.1%}", flush=True)
+                if mean_progress > best_eval_progress:
+                    best_eval_progress = mean_progress
+                    agent.save(checkpoint_dir, "best")
         if stop_requested or cur_step - last_saved_step >= args.checkpoint_every or episode + 1 == config.episodes:
-            agent.save_training_state(recovery_path, episode=episode + 1, step=cur_step, best_reward=best_reward)
+            agent.save_training_state(recovery_path, episode=episode + 1, step=cur_step, best_reward=best_reward, best_eval_progress=best_eval_progress)
             last_saved_step = cur_step
             print(f"Recovery checkpoint saved after episode {episode + 1} at step {cur_step}.", flush=True)
         if stop_requested:

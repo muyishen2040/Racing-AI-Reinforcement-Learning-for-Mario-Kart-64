@@ -83,6 +83,17 @@ the training scripts use.
 
 Networks live in `src/model.py`.
 
+SAC uses reparameterized joystick actions and a score-function gradient for
+the discrete A/B/R buttons. Its entropy target treats the joystick in
+normalized [-1, 1] units and targets half the maximum binary-button entropy.
+Every 20 training episodes it evaluates the deterministic policy for three
+races (up to 1,000 steps each). `--eval-every`, `--eval-episodes`, and
+`--eval-max-steps` adjust this; `--eval-every 0` disables evaluation.
+Evaluation logs mean progress, reward, and completion rate to TensorBoard;
+the highest mean evaluation progress determines `actor_best.pth`. The
+training-episode best is saved separately as `actor_training_best.pth`.
+Evaluation adds emulator time and its maximum length may limit completion.
+
 ## Resuming SAC training
 
 SAC writes `checkpoints/sac/latest.pt` every 1,000 environment steps and on
