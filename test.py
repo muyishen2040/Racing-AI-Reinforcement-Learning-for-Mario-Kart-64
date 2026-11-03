@@ -17,7 +17,7 @@ from src.model import ActorNet
 
 
 def main() -> None:
-    """Load the actor and run evaluation episodes with sampled actions."""
+    """Load the actor and run deterministic evaluation episodes by default."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("actor")
     parser.add_argument("--course", default="LuigiRaceway")
@@ -29,7 +29,7 @@ def main() -> None:
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     actor = ActorNet(80).to(device)
-    actor.load_state_dict(torch.load(args.actor, map_location=device))
+    actor.load_state_dict(torch.load(args.actor, map_location=device, weights_only=True))
     actor.eval()
     env = make_pixel_env(args.course, render_mode="rgb_array")
     recorder = VideoRecorder(args.video, fps=15) if args.video else None

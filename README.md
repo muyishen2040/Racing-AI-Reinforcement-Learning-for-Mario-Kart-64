@@ -147,6 +147,17 @@ The window updates every four environment steps by default; use
 overhead. Closing the window disables the preview without ending training.
 Without `--preview` the scripts remain headless. Previewing can slow training.
 
+To evaluate an actor downloaded from a GitHub release, provide its path to
+`test.py`. For example, after setting up the emulator and your own ROM:
+
+```bash
+python test.py luigi_raceway_sac_step_247898.pt --course LuigiRaceway --episodes 1 --preview --preview-every 1
+```
+
+Evaluation uses deterministic actions by default; add `--stochastic` to sample
+actions. The released actor contains inference weights only. To resume training,
+use a full recovery checkpoint instead. Episodes are capped at 2,500 steps.
+
 For an EC2 instance, run TigerVNC on the instance bound to localhost and
 connect from your computer through an SSH tunnel. For example, after
 installing `tigervnc-standalone-server` and `openbox` on Ubuntu:
