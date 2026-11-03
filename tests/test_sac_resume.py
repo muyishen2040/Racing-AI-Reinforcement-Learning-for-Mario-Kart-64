@@ -9,7 +9,7 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("tensorboard")
 
-from train_sac import Config, ReplayBuffer, SAC
+from train_sac import Config, ReplayBuffer, SAC, set_forward_bias
 
 
 def small_agent():
@@ -71,3 +71,17 @@ def test_failed_save_does_not_replace_checkpoint(tmp_path, monkeypatch):
         agent.save_training_state(path, episode=0, step=0, best_reward=0.0)
     assert path.read_bytes() == b"previous"
     assert not (tmp_path / "latest.pt.tmp").exists()
+
+
+def test_forward_bias_override_resets_only_its_optimizer_state():
+    actor = torch.nn.Module()
+    actor.forward_bias = torch.nn.Parameter(torch.tensor(2.0))
+    actor.other = torch.nn.Parameter(torch.tensor(1.0))
+    optimizer = torch.optim.Adam(actor.parameters())
+    (actor.forward_bias + actor.other).backward()
+    optimizer.step()
+    agent = SimpleNamespace(actor=SimpleNamespace(actor_net=actor, optimizer=optimizer))
+    set_forward_bias(agent, 10.0)
+    assert actor.forward_bias.item() == 10.0
+    assert actor.forward_bias not in optimizer.state
+    assert actor.other in optimizer.state

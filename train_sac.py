@@ -80,6 +80,14 @@ def hybrid_actor_loss(q, continuous_log_prob, binary_log_prob, alpha):
     return (alpha * continuous_log_prob - q + weight * binary_log_prob).mean()
 
 
+def set_forward_bias(agent, value: float) -> None:
+    """Change the A-button bias and discard its previous optimizer moments."""
+    bias = agent.actor.actor_net.forward_bias
+    with torch.no_grad():
+        bias.fill_(value)
+    agent.actor.optimizer.state.pop(bias, None)
+
+
 class SAC:
     """Actor, twin critics, and entropy temperature with one update step."""
 
@@ -233,9 +241,12 @@ def main() -> None:
     resume.add_argument("--init-from", metavar="DIR", help="initialize a new run from legacy best weights")
     parser.add_argument("--preview", action="store_true", help="show emulator frames in a window")
     parser.add_argument("--preview-every", type=int, default=4, help="update the window every N steps")
+    parser.add_argument("--forward-bias", type=float, default=None, help="set the initial/resumed A-button bias (it remains trainable)")
     args = parser.parse_args()
     if args.checkpoint_every < 1:
         parser.error("--checkpoint-every must be at least 1")
+    if args.forward_bias is not None and not math.isfinite(args.forward_bias):
+        parser.error("--forward-bias must be finite")
     if args.eval_every < 0 or args.eval_episodes < 1 or args.eval_max_steps < 1:
         parser.error("eval-every must be nonnegative and evaluation sizes must be positive")
     checkpoint_dir = Path(args.checkpoint_dir or Config.checkpoint_dir)
@@ -289,6 +300,9 @@ def main() -> None:
             agent.load_legacy_weights(Path(args.init_from))
             print("Initialized from legacy weights; optimizer and replay buffer start fresh.", flush=True)
         start_episode, cur_step, best_reward, best_eval_progress = 0, 0, -np.inf, -math.inf
+    if args.forward_bias is not None:
+        set_forward_bias(agent, args.forward_bias)
+        print(f"Set A-button forward bias to {args.forward_bias:g}; it remains trainable.", flush=True)
     stop_requested = False
     def request_stop(signum, frame):
         nonlocal stop_requested

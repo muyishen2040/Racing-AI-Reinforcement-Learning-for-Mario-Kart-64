@@ -109,6 +109,10 @@ python train_sac.py --memory-len 10000 --preview
 python train_sac.py --resume --preview
 ```
 
+Use `--forward-bias 10` when starting or resuming to set the trainable A-button
+bias to 10. This resets the optimizer moments for that parameter only; later
+resumes without the flag keep the bias saved in the checkpoint.
+
 `--episodes` is the total episode target including earlier episodes. A
 checkpoint taken mid-episode resumes at the beginning of that episode, not
 the exact emulator frame; any work since the last checkpoint can be lost on
