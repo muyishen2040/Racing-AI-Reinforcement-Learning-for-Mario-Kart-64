@@ -18,6 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 train = ["torch>=2.4", "torchvision", "tensorboard", "tqdm", "pygame"]
+preview = ["pygame>=2.6"]
 test = ["pytest"]
 
 [tool.setuptools]

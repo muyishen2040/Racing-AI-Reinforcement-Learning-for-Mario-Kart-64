@@ -34,7 +34,7 @@ class ActorNet(nn.Module):
             nn.Linear(256, 3)
         )
 
-        self.forward_bias = nn.Parameter(torch.tensor(10.0))
+        self.forward_bias = nn.Parameter(torch.tensor(2.0))
 
     def _get_conv_output(self, shape):
         with torch.no_grad():
@@ -137,22 +137,18 @@ class Actor:
         mean, std, binary_logits = self.actor_net(state)
         dist = torch.distributions.Normal(mean, std)
         
-        noise = torch.distributions.Normal(0, 1)
-        z = noise.sample()
-        
-        continuous_action = mean + std * z
+        continuous_action = dist.rsample()
         scaled_action = torch.tanh(continuous_action) * 80.0
         continuous_action_log_prob = dist.log_prob(continuous_action).sum(dim=-1, keepdim=True) - torch.log(1 - torch.tanh(continuous_action).pow(2) + 1e-6).sum(dim=-1, keepdim=True)
 
-        prob = torch.sigmoid(binary_logits)
-        binary_dist = torch.distributions.Bernoulli(probs=prob)
+        binary_dist = torch.distributions.Bernoulli(logits=binary_logits)
         binary_action = binary_dist.sample()
         binary_action_log_prob = binary_dist.log_prob(binary_action).sum(dim=-1, keepdim=True)
 
         action_log_prob = continuous_action_log_prob + binary_action_log_prob
         action = torch.cat([scaled_action, binary_action], dim=-1)
 
-        return action, action_log_prob, z, mean, std
+        return action, action_log_prob, continuous_action_log_prob, binary_action_log_prob, mean
     
 
     def learn(self, loss):
@@ -168,6 +164,7 @@ class Critic:
         self.device = device
         self.critic_net = CriticNet().to(device)
         self.target_net = CriticNet().to(device)
+        self.target_net.load_state_dict(self.critic_net.state_dict())
         # self.critic_net = torch.load('checkpoints/BC/critic_100.pth')
         # self.target_net = torch.load('checkpoints/BC/critic_100.pth')
         self.optimizer = torch.optim.Adam(self.critic_net.parameters(), lr=critic_lr, eps=1e-5)
